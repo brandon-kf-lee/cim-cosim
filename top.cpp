@@ -9,12 +9,14 @@ int sc_main(int argc, char* argv[]) {
     Mem_Controller mc("mc");
     Testbench tb("tb");
 
+    // Sockets
+    tb.socket.bind(mc.t_cpu_socket);    // Bind testbench socket to memory controller socket
+    mc.i_sram_socket.bind(sram.socket); // Bind memory controller socket to SRAM socket
 
-    // Bind testbench socket to memory controller socket
-    tb.socket.bind(mc.t_cpu_socket);
-
-    // Bind memory controller socket to SRAM socket
-    mc.i_sram_socket.bind(sram.socket);
+    // IRQ wiring
+    sc_core::sc_signal<bool> irq_sig("irq_sig");
+    mc.irq(irq_sig);
+    tb.irq(irq_sig);
 
     sc_core::sc_start();
 

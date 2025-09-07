@@ -2,6 +2,9 @@
 
 #include "include/sram.h"
 
+using namespace sc_core;
+using namespace tlm;
+
 Sram::Sram(sc_module_name name, uint32_t size_bytes):
       sc_module(name),
       socket("socket"),

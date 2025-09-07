@@ -10,13 +10,13 @@
 #include "tlm"
 #include "tlm_utils/simple_initiator_socket.h"
 
-using namespace sc_core;
-using namespace tlm;
-
 SC_MODULE(Testbench) { 
     // Initiator socket declaration
     tlm_utils::simple_initiator_socket<Testbench> socket;
 
+    // CPU interrupt receiver
+    sc_core::sc_in<bool>irq;
+    
     void run();
 
     SC_CTOR(Testbench){

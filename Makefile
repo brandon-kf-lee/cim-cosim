@@ -8,6 +8,7 @@ LIBRARY = $(SYSTEMC)/lib
 # Flags
 CFLAGS = -std=c++17 $(INCLUDE) 
 LDFLAGS = -L$(LIBRARY) -lsystemc -O2 -Wl,-rpath,$(LIBRARY)
+CXXFLAGS += -g -O0 # Enable debugging
 
 CC = g++
 RM = rm -f
