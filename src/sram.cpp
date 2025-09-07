@@ -12,6 +12,10 @@ Sram::Sram(sc_module_name name, uint32_t size_bytes):
     socket.register_b_transport(this, &Sram::b_transport); // Register the b_transport function within the socket
 }
 
+Sram::~Sram() {
+    delete[] mem;
+}
+
 void Sram::b_transport(tlm_generic_payload &trans, sc_time &delay) {
     // Load all data from payload
     tlm::tlm_command cmd = trans.get_command();

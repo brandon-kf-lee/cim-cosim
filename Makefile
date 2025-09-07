@@ -14,9 +14,11 @@ RM = rm -f
 
 # Source and object file names
 SRC = src/sram.cpp \
+	  src/mem_controller.cpp \
 	  src/testbench.cpp  \
 	  top.cpp
 OBJ = sram.o \
+	  mem_controller.o \
 	  testbench.o
 TARGET = sim
 
