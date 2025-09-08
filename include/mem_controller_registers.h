@@ -15,11 +15,11 @@ enum : uint32_t {
 };
 
 // CONTROL bits
-static constexpr uint32_t CTRL_START = 1u << 0; // b0001
-static constexpr uint32_t CTRL_WRITE = 1u << 1; // b0010
-static constexpr uint32_t CTRL_IRQEN = 1u << 2; // b0100
+static constexpr uint32_t CTRL_START = 1u << 0; // b0001, 0x01
+static constexpr uint32_t CTRL_WRITE = 1u << 1; // b0010, 0x02
+static constexpr uint32_t CTRL_IRQEN = 1u << 2; // b0100, 0x04
 
 // STATUS bits
-static constexpr uint32_t STAT_BUSY = 1u << 0;  // b0001
-static constexpr uint32_t STAT_DONE = 1u << 1;  // b0010
-static constexpr uint32_t STAT_ERR  = 1u << 2;  // b0100
+static constexpr uint32_t STAT_BUSY = 1u << 0;  // b0001, 0x01
+static constexpr uint32_t STAT_DONE = 1u << 1;  // b0010, 0x02
+static constexpr uint32_t STAT_ERR  = 1u << 2;  // b0100, 0x04
