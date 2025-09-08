@@ -74,5 +74,7 @@ void Testbench::run() {
 
     // Ack DONE
     mmio_write(REG_STATUS, STAT_DONE);
+    std::printf("Pre wait: %d\n", irq.read());
     wait(SC_ZERO_TIME);
+    std::printf("Post wait: %d\n", irq.read());
 }
