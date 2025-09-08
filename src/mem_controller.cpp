@@ -41,7 +41,7 @@ void Mem_Controller::start_operation(sc_core::sc_time& delay) {
         return;
     }
 
-    // Completed transaction: set BUSY=1, clear DONE=0.
+    // Set busy status before transaction: set BUSY=1, DONE=0.
     reg_status |= STAT_BUSY;
     reg_status &= ~STAT_DONE;
     update_irq();
@@ -78,7 +78,7 @@ void Mem_Controller::start_operation(sc_core::sc_time& delay) {
         reg_status |= STAT_ERR;
     }
 
-    // Completed transaction: clear BUSY=0, Set DONE=1.
+    // Completed transaction: set BUSY=0, DONE=1.
     reg_status &= ~STAT_BUSY;
     reg_status |= STAT_DONE;
     update_irq();
