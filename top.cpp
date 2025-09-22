@@ -5,7 +5,7 @@
 #include "include/testbench.h"
 
 int sc_main(int argc, char* argv[]) {
-    Sram sram("sram", 1024); // 1KB SRAM
+    Sram sram("sram", 262144); // 256KB SRAM
     Mem_Controller mc("mc");
     Testbench tb("tb");
 
