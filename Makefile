@@ -1,14 +1,13 @@
 # Makefile for mem_ctrl
 
 # SystemC include and library locations
-SYSTEMC = $(HOME)/systemc
+SYSTEMC = $(SYSTEMC_HOME)
 INCLUDE = -I. -I$(SYSTEMC)/include
 LIBRARY = $(SYSTEMC)/lib
 
 # Flags
-CFLAGS = -std=c++17 $(INCLUDE) 
-LDFLAGS = -L$(LIBRARY) -lsystemc -O2 -Wl,-rpath,$(LIBRARY)
-CXXFLAGS += -g -O0 # Enable debugging
+CFLAGS = -std=c++17 $(INCLUDE) -g -O0
+LDFLAGS = -L$(LIBRARY) -lsystemc -Wl,-rpath,$(LIBRARY)
 
 CC = g++
 RM = rm -f
