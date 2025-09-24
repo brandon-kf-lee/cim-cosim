@@ -28,11 +28,31 @@ void Sram::b_transport(tlm_generic_payload &trans, sc_time &delay) {
     uint8_t*   mask = trans.get_byte_enable_ptr();
     //uint32_t   wid = trans.get_streaming_width();
 
+    // Start compute in memory operation
+    // SRAM_COMPUTE_CMD is a special memory address that will tell SRAM to start computing and not read or write
+    // TODO: look at SystemC threads
+    // TODO: add SRAM compute in memory delays here
+    if(addr == SRAM_COMPUTE_CMD) {
+        float* weights = (float*)&mem[WEIGHT_BASE_ADDR];
+        float* bias = (float*)&mem[BIAS_BASE_ADDR];
+        uint8_t* pixels = (uint8_t*)&mem[INPUT_BASE_ADDR];
+        float* activations = (float*)&mem[OUTPUT_BASE_ADDR];
+        
+        // Neural network computation
+        for(int i = 0; i < MNIST_LABELS; i++) {
+            activations[i] = bias[i];  // Start with bias
+            for(int j = 0; j < MNIST_IMAGE_SIZE; j++) {
+                float normalized_pixel = (float)pixels[j] / 255.0f;
+                activations[i] += normalized_pixel * weights[i * MNIST_IMAGE_SIZE + j];
+            }
+        }
+    }
+        
     // Error if memory access is outside valid memory space 
     if(addr + len > mem_size) {
         trans.set_response_status(TLM_ADDRESS_ERROR_RESPONSE);
         return;
-    } 
+    }
 
     // Read data from mem into data pointer
     if(cmd == TLM_READ_COMMAND) {
@@ -48,10 +68,9 @@ void Sram::b_transport(tlm_generic_payload &trans, sc_time &delay) {
                 }
             }
         }
-    }
 
     // Write data from data pointer into mem
-    else if(cmd == TLM_WRITE_COMMAND) {
+    } else if(cmd == TLM_WRITE_COMMAND) {
         if(!mask) {
             memcpy(&mem[addr], ptr, len);
         }
