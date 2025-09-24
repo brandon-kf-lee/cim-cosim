@@ -29,6 +29,8 @@ void Mem_Controller::update_irq() {
         CONTROL, ADDR, LEN, WDATA.
     CPU reads from registers to get data & check status:
         RDATA, STATUS
+    CPU signals computation in SRAM by setting SRAM_COMPUTE_CMD:
+        ADDR
     Controller sends a bus transaction into SRAM, SRAM executes it.
     Controller updates STATUS: BUSY=0, DONE=1. Raises IRQ if enabled.
     CPU either polls DONE or gets interrupted, then reads back RDATA (for reads).
@@ -56,12 +58,21 @@ void Mem_Controller::start_operation(sc_core::sc_time& delay) {
     trans.set_dmi_allowed(false);                            // Disable DMI
     trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE); // Transaction not complete yet, wait for read/write
 
+    // COMPUTE, send special compute command through address
+    if(reg_control & CTRL_COMPUTE) { 
+    
+        trans.set_command(tlm::TLM_WRITE_COMMAND);
+        trans.set_address(SRAM_COMPUTE_CMD); // Tell SRAM to start compute, not read/write from memory
+        trans.set_data_length(0);
+        trans.set_data_ptr(nullptr);
+        i_sram_socket->b_transport(trans, delay);
+
     // WRITE, copy reg_wdata to buffer, send and write to sram through b_transport
-    if (reg_control & CTRL_WRITE) {
+    } else if (reg_control & CTRL_WRITE) {
         std::memcpy(buf, &reg_wdata, 4);
         trans.set_command(tlm::TLM_WRITE_COMMAND);
         trans.set_data_ptr(buf);
-        i_sram_socket->b_transport(trans, delay);
+        i_sram_socket->b_transport(trans, delay);    
     
     // READ, read from buffer into reg_rdata
     } else {
@@ -167,19 +178,3 @@ void Mem_Controller::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_ti
 
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
 }
-
-
-
-// // Transaction translation and relay
-// void Mem_Controller::b_transport(tlm_generic_payload &trans, sc_core::sc_time &delay)
-// {
-//     // Example: print debug info
-//     std::cout << "[MC] Received transaction, forwarding to SRAM..." << std::endl;
-
-//     // Optional: translate transation to SRAM access (e.g., implement address remap, CIM decode, etc.)
-
-//     // Forward to SRAM
-//     i_sram_socket->b_transport(trans, delay);
-
-//     // Optional: post-process after SRAM response
-// }
