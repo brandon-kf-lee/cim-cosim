@@ -1,17 +1,18 @@
 // mem_controller.h
 // The CIM device's driver
 
-#pragma once
+#ifndef MEM_CONTROLLER_H
+#define MEM_CONTROLLER_H
 
-#include <cstdio>
-// #include <cstring>
-#include <iostream>
+#include <stdio.h>
 
-#include "mem_controller_registers.h"
 #include "systemc"
 #include "tlm"
 #include "tlm_utils/simple_initiator_socket.h"
 #include "tlm_utils/simple_target_socket.h"
+
+#include "include/mem_controller_registers.h"
+
 
 SC_MODULE(Mem_Controller) { 
     // CPU (testbench) and SRAM socket declaration
@@ -38,3 +39,5 @@ private:
     void update_irq();
 
 };
+
+#endif // MEM_CONTROLLER_H

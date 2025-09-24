@@ -1,15 +1,15 @@
 // sram.h
 // Simulated compute-in-memory memory module
 
-#pragma once
-
-// #include <cstring>
-# include <cstdint>
-// #include <iostream>
+#ifndef SRAM_H
+#define SRAM_H
 
 #include "systemc"
 #include "tlm"
 #include "tlm_utils/simple_target_socket.h"
+
+#include "include/mem_controller_registers.h"
+#include "include/mnist_network.h"
 
 SC_MODULE(Sram)
 {
@@ -31,3 +31,5 @@ private:
     uint32_t mem_size;
     sc_core::sc_time latency;
 };
+
+#endif // SRAM_H
