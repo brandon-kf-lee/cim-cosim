@@ -33,6 +33,6 @@ static constexpr uint32_t STAT_ERR  = 1u << 2;  // b0100, 0x04
 #define BIAS_BASE_ADDR   0x00009000  // 0x00009000 - 0x00009027  40 bytes for uint32_t float bias (10×1)  
 #define INPUT_BASE_ADDR  0x00009028  // 0x00009028 - 0x00009C67  784 bytes for uint8_t input (784×1)
 #define OUTPUT_BASE_ADDR 0x00009338  // 0x00009338 - 0x0000935F  40 bytes for uint32_t float output (10×1)
-#define SRAM_COMPUTE_CMD 0xFFFFFFFF  // 0xFFFFFFFF               Special address to communicate compute command
+#define SRAM_COMPUTE_CMD 0xFFFFFFFF  // 0xFFFFFFFF               Special address to signal compute execution
 
 #endif // MEM_CONTROLLER_REGISTERS_H
