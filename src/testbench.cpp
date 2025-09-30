@@ -10,7 +10,7 @@ void Testbench::run() {
 
     // Load the pre-trained network
     neural_network_t network;
-    FILE* mnist_network = fopen("include/mnist_network.bin", "rb");
+    FILE* mnist_network = fopen("binaries/mnist_network.bin", "rb");
     if (!mnist_network) {
         printf("Failed to open network file.\n");
         return;
@@ -21,7 +21,7 @@ void Testbench::run() {
 
     // Load pre-processed MNIST number
     mnist_image_t number;
-    FILE* mnist_number = fopen("include/mnist_0.bin", "rb");
+    FILE* mnist_number = fopen("binaries/mnist_0.bin", "rb");
     if(!mnist_number){
         printf("Failed to open number file.\n");
         return;
