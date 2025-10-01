@@ -30,6 +30,8 @@ private:
     uint8_t* mem;
     uint32_t mem_size;
     sc_core::sc_time latency;
+
+    void compute_in_memory();
 };
 
 #endif // SRAM_H
