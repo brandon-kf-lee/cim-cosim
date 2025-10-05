@@ -18,7 +18,7 @@ public:
     tlm_utils::simple_target_socket<Sram> socket;
     
     // SRAM module constructor
-    Sram(sc_core::sc_module_name name, uint32_t size_bytes);
+    Sram(sc_core::sc_module_name name);
 
     // SRAM module destructor
     ~Sram();
@@ -28,7 +28,6 @@ public:
 
 private: 
     uint8_t* mem;
-    uint32_t mem_size;
     sc_core::sc_time latency;
 
     void compute_in_memory();

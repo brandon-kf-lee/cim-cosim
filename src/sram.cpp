@@ -5,13 +5,12 @@
 using namespace sc_core;
 using namespace tlm;
 
-Sram::Sram(sc_module_name name, uint32_t size_bytes):
+Sram::Sram(sc_module_name name):
       sc_module(name),
       socket("socket"),
-      mem_size(size_bytes),
       latency(10, SC_NS) {
     
-    mem = new uint8_t[mem_size](); // Create space for memory 
+    mem = new uint8_t[SRAM_SIZE](); // Create space for memory 
     socket.register_b_transport(this, &Sram::b_transport); // Register the b_transport function within the socket
 }
 
@@ -31,12 +30,14 @@ void Sram::b_transport(tlm_generic_payload &trans, sc_time &delay) {
     // Start compute in memory operation
     // SRAM_COMPUTE_CMD is a special memory address that will tell SRAM to start computing and not read or write
     if(addr == SRAM_COMPUTE_CMD) {
-        //Spawn parallel computation
-        sc_spawn(sc_bind(&Sram::compute_in_memory, this));
+        // Execute compute in memory
+        compute_in_memory();
+        trans.set_response_status(TLM_OK_RESPONSE);
+        return;
     }
         
     // Error if memory access is outside valid memory space 
-    if(addr + len > mem_size) {
+    if(addr + len > SRAM_SIZE) {
         trans.set_response_status(TLM_ADDRESS_ERROR_RESPONSE);
         return;
     }
@@ -129,11 +130,11 @@ void Sram::compute_in_memory() {
             }
             wait(mult_done);
 
-            // Adder tree + modeled delay
+            // Adder tree
             for(int j = 0; j < MNIST_IMAGE_SIZE; j++) {
                 sum += partial_mult[j];
             }
-            wait(SC_ZERO_TIME); 
+            wait(SC_ZERO_TIME); // Modelled delay
             
             activations[i] = sum;
 
