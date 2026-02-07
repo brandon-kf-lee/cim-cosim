@@ -1,0 +1,4 @@
+[submodule "tools/qemu"]
+	path = tools/qemu
+	url = https://github.com/brandon-kf-lee/qemu.git
+	branch = qemu-sc
