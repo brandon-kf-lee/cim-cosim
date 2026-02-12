@@ -3,7 +3,7 @@
 ## Required Versions
 - QEMU: submodule (qemu-sc branch)
 - SystemC: 3.0.2
-- Buildroot: 2024.11.1
+- Buildroot: 2025.11.1
 
 ## Setup
 ```bash
