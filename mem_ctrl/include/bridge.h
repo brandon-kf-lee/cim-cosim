@@ -21,6 +21,7 @@ struct bridge_msg {
     uint64_t addr;
     uint32_t size;
     uint32_t data;
+    int8_t status;
 } __attribute__((packed));  /* Ensure no padding */
 
 SC_MODULE(Bridge) { 
@@ -40,8 +41,8 @@ private:
     sc_core::sc_time delay;
 
     // Reading and writing the registers inside the memory controller
-    void mmio_write(uint32_t addr_offset, uint32_t value);
-    void mmio_read(uint32_t addr_offset, uint32_t& value);
+    tlm::tlm_response_status mmio_write(uint32_t addr_offset, uint32_t value);
+    tlm::tlm_response_status mmio_read(uint32_t addr_offset, uint32_t& value);
     void ctrl_wait();
 
     // // Abstracted memory controller writes

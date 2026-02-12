@@ -35,17 +35,24 @@ void Bridge::run() {
         }
 
         printf("[DEBUG] Received: is_write: %d, addr: 0x%lx, data: 0x%x, size: %d \n", msg.is_write, msg.addr, msg.data, msg.size);
+        
         if (msg.is_write) {
-            mmio_write(msg.addr, msg.data);
-            //dev.write(msg.addr, msg.data, msg.size);
+            msg.status = mmio_write(msg.addr, msg.data);
+            
+            if (msg.status != tlm::TLM_OK_RESPONSE) {
+                printf("[ERROR] WRITE FAILED: addr=0x%lx, status=%d\n", msg.addr, msg.status);
+            }       
+
             printf("[DEBUG] WRITE:    is_write: %d, addr: 0x%lx, data: 0x%x, size: %d \n\n", msg.is_write, msg.addr, msg.data, msg.size);
+        
         } else {
             uint32_t read_data;
-            mmio_read(msg.addr, read_data);
+            msg.status = mmio_read(msg.addr, read_data);
             msg.data = read_data;
             
-            //msg.data = dev.read(msg.addr, msg.size);
-
+            if (msg.status != tlm::TLM_OK_RESPONSE) {
+                printf("[ERROR] READ FAILED: addr=0x%lx, status=%d\n", msg.addr, msg.status);
+            }
 
             printf("[DEBUG] READ:     is_write: %d, addr: 0x%lx, data: 0x%x, size: %d \n\n", msg.is_write, msg.addr, msg.data, msg.size);
         }
@@ -55,8 +62,7 @@ void Bridge::run() {
 }
 
 // Helper function to write to mmio
-void Bridge::mmio_write(uint32_t addr_offset, uint32_t value) {
-    tlm::tlm_generic_payload trans;
+tlm::tlm_response_status Bridge::mmio_write(uint32_t addr_offset, uint32_t value) {    tlm::tlm_generic_payload trans;
     trans.set_command(tlm::TLM_WRITE_COMMAND);
     trans.set_address(addr_offset);
     trans.set_data_length(4);
@@ -68,11 +74,12 @@ void Bridge::mmio_write(uint32_t addr_offset, uint32_t value) {
     uint32_t v = value;
     trans.set_data_ptr(reinterpret_cast<unsigned char*>(&v));
     tlm_socket->b_transport(trans, delay);
-    return;
+
+    return trans.get_response_status();
 };
 
 // Helper function to read from mmio
-void Bridge::mmio_read(uint32_t addr_offset, uint32_t& value) {
+tlm::tlm_response_status Bridge::mmio_read(uint32_t addr_offset, uint32_t& value) {
     tlm::tlm_generic_payload trans;
     trans.set_command(tlm::TLM_READ_COMMAND);
     trans.set_address(addr_offset);
@@ -86,7 +93,7 @@ void Bridge::mmio_read(uint32_t addr_offset, uint32_t& value) {
     trans.set_data_ptr(reinterpret_cast<unsigned char*>(&v));
     tlm_socket->b_transport(trans, delay);
     value = v;
-    return;
+    return trans.get_response_status();
 };
 
 void Bridge::ctrl_wait() {
