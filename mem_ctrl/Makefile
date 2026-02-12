@@ -35,15 +35,15 @@ SRC = src/sram.cpp \
 OBJ = sram.o \
 	  mem_controller.o \
 	  bridge.o
-TARGET = sim
+TARGET = listen
 
 all: $(TARGET)
 
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
 
-test: sim
-	./sim
+test: listen
+	./listen
 
 clean:
 	$(RM) *.o $(TARGET)
@@ -54,7 +54,7 @@ help:
 	@echo "  make                    - Build with automatic architecture detection"
 	@echo "  make ARCH_64BIT=force32 - Force 32-bit host mode (single DMA address register)"
 	@echo "  make ARCH_64BIT=force64 - Force 64-bit host mode (split DMA address registers)"
-	@echo "  make test               - Build and run simulation"
+	@echo "  make test               - Build and run bridge"
 	@echo "  make clean              - Remove build artifacts"
 	@echo "  make help               - Show this help message"
 
