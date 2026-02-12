@@ -1,3 +1,14 @@
+
+/* TODO:
+    This code emulates what the low level libraries used by application code in QEMU would
+    do. 
+
+    bridge_msg status codes are secretly tlm_response_status codes. ensure that error codes 
+    and their meanings are properly relayed
+
+*/
+
+
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -14,6 +25,7 @@ struct bridge_msg {
     uint64_t addr;
     uint32_t size;
     uint32_t data;
+    int8_t status;
 } __attribute__((packed));
 
 int main(void)
@@ -69,16 +81,23 @@ int main(void)
     int num_msgs = sizeof(msgs) / sizeof(msgs[0]);
 
     for (int i = 0; i < num_msgs; i++) {
+        // Send message
         send(sock, &msgs[i], sizeof(struct bridge_msg), 0);
 
-        if (msgs[i].is_write) {
-            printf("WR [0x%02lx] = 0x%08x\n",
-                   (unsigned long)msgs[i].addr, msgs[i].data);
-        } else {
-            recv(sock, &response, sizeof(struct bridge_msg), 0);
-            printf("RD [0x%02lx] = 0x%08x\n",
-                   (unsigned long)msgs[i].addr, response.data);
-        }
+        // Wait for ACK/response
+        recv(sock, &response, sizeof(struct bridge_msg), 0);
+
+
+        printf("%s [0x%02lx] sent=0x%08x | status: %d ACK: is_write=%d addr=0x%02lx data=0x%08x\n",
+                       msgs[i].is_write ? "WR" : "RD",
+        (unsigned long)msgs[i].addr,
+                       msgs[i].data,
+                       
+                       response.status,
+                       response.is_write,
+        (unsigned long)response.addr,
+                       response.data);
+
     }
 
     close(sock);
