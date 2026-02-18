@@ -16,11 +16,18 @@
 
 #include "include/mem_controller_registers.h"
 
+#define DMA_BUFFER_SIZE 4096   // 4KB
+
 struct bridge_msg {
     uint8_t  is_write;
+    uint8_t  is_dma;
+    uint16_t reserved; /* Ensure word alignment */
+
     uint64_t addr;
     uint32_t size;
-    uint32_t data;
+
+    uint8_t  data[DMA_BUFFER_SIZE];
+
     int8_t status;
 } __attribute__((packed));  /* Ensure no padding */
 
@@ -42,6 +49,7 @@ private:
 
     // Reading and writing the registers inside the memory controller
     tlm::tlm_response_status mmio_write(uint32_t addr_offset, uint32_t value);
+    tlm::tlm_response_status mmio_write_block(uint32_t addr_offset, uint8_t *value, uint32_t len);
     tlm::tlm_response_status mmio_read(uint32_t addr_offset, uint32_t& value);
     void ctrl_wait();
 
