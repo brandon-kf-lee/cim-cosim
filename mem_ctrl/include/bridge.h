@@ -37,7 +37,7 @@ SC_MODULE(Bridge) {
 
     // CTRL (memory controller) and DMA interrupt handler
     sc_core::sc_in<bool> irq; // TODO: rename ctrl_irq
-    sc_core::sc_in<bool> dma_irq;
+    //sc_core::sc_in<bool> dma_irq;
     
     void run();
 
