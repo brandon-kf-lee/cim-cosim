@@ -73,11 +73,15 @@ static constexpr uint32_t DMA_BUSY = 1u << 0;   // 0x01
 static constexpr uint32_t DMA_DONE = 1u << 1;   // 0x02
 static constexpr uint32_t DMA_ERR  = 1u << 2;   // 0x04
 
+// Transfer buffer size
+#define DMA_BUFFER_SIZE 4096
+
 // SRAM Size
 static constexpr uint32_t SRAM_SIZE = 262144; // 256KB SRAM
 
 // SRAM Memory Layout (CIM Data Regions)
 // SRAM addresses are abstracted away for now, may not represent where the data (weights, input) should be stored in a real CIM system
+#define CIM_DATA_REGION  0x00001000  // Marker for the start of CIM data section
 #define WEIGHT_BASE_ADDR 0x00001000  // 0x00001000 - 0x00008FFF  31,360 bytes for uint32_t float weights (10×784)
 #define BIAS_BASE_ADDR   0x00009000  // 0x00009000 - 0x00009027  40 bytes for uint32_t float bias (10×1)  
 #define INPUT_BASE_ADDR  0x00009028  // 0x00009028 - 0x00009C67  784 bytes for uint8_t input (784×1)
