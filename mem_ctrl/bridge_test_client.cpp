@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -19,14 +20,48 @@
 #include "include/mem_controller_registers.h"
 
 #define TEST_ADDR   0x1000
+#define DMA_BUFFER_SIZE 4096
 
 struct bridge_msg {
     uint8_t  is_write;
+    uint8_t  is_dma;
+    uint16_t reserved;
+
     uint64_t addr;
     uint32_t size;
-    uint32_t data;
+
+    uint8_t  data[DMA_BUFFER_SIZE];
+
     int8_t status;
 } __attribute__((packed));
+
+// Helper to create a message with a uint32_t data value
+struct bridge_msg make_msg(uint8_t is_write, uint8_t is_dma, uint64_t addr, uint32_t data_val) {
+    struct bridge_msg msg = {0};
+    msg.is_write = is_write;
+    msg.is_dma = is_dma;
+    msg.addr = addr;
+    msg.size = sizeof(data_val);
+    memcpy(msg.data, &data_val, sizeof(data_val));
+    return msg;
+}
+
+struct bridge_msg make_dma_msg(uint8_t is_write, uint64_t addr, uint8_t* buf, uint32_t size) {
+    struct bridge_msg msg = {0};
+    msg.is_write = is_write;
+    msg.is_dma = 1;
+    msg.addr = addr;
+    msg.size = size;
+    memcpy(msg.data, buf, size);
+    return msg;
+}
+
+// Helper to extract uint32_t from data array
+uint32_t get_data_u32(const struct bridge_msg *msg) {
+    uint32_t val;
+    memcpy(&val, msg->data, sizeof(val));
+    return val;
+}
 
 int main(void)
 {
@@ -39,65 +74,88 @@ int main(void)
     strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
     connect(sock, (struct sockaddr *)&addr, sizeof(addr));
 
+    uint8_t* tmp_buf = static_cast<uint8_t*>(calloc(DMA_BUFFER_SIZE, sizeof(uint8_t)));
+    for(int i = 0; i < DMA_BUFFER_SIZE; ++i) {
+        tmp_buf[i] = 2;
+    }
+
     struct bridge_msg msgs[] = {
         // === Write 0xDEADBEEF to SRAM address 0x1000 ===
-        { .is_write = 1, .addr = REG_ADDR,    .size = 4, .data = TEST_ADDR },       // Set target address
-        { .is_write = 1, .addr = REG_LEN,     .size = 4, .data = 4 },               // Set length
-        { .is_write = 1, .addr = REG_WDATA,   .size = 4, .data = 0xDEADBEEF },      // Set write data
-        { .is_write = 1, .addr = REG_CONTROL, .size = 4, .data = CTRL_START | CTRL_WRITE }, // Execute write
+        make_msg(1, 0, REG_ADDR,    TEST_ADDR),
+        make_msg(1, 0, REG_LEN,     4),
+        make_msg(1, 0, REG_WDATA,   0xDEADBEEF),
+        make_msg(1, 0, REG_CONTROL, CTRL_START | CTRL_WRITE),
 
         // === Write 0xCAFEBABE to SRAM address 0x1004 ===
-        { .is_write = 1, .addr = REG_ADDR,    .size = 4, .data = TEST_ADDR + 4 },
-        { .is_write = 1, .addr = REG_LEN,     .size = 4, .data = 4 },
-        { .is_write = 1, .addr = REG_WDATA,   .size = 4, .data = 0xCAFEBABE },
-        { .is_write = 1, .addr = REG_CONTROL, .size = 4, .data = CTRL_START | CTRL_WRITE },
+        make_msg(1, 0, REG_ADDR,    TEST_ADDR + 4),
+        make_msg(1, 0, REG_LEN,     4),
+        make_msg(1, 0, REG_WDATA,   0xCAFEBABE),
+        make_msg(1, 0, REG_CONTROL, CTRL_START | CTRL_WRITE),
 
         // === Write 0x12345678 to SRAM address 0x1008 ===
-        { .is_write = 1, .addr = REG_ADDR,    .size = 4, .data = TEST_ADDR + 8 },
-        { .is_write = 1, .addr = REG_LEN,     .size = 4, .data = 4 },
-        { .is_write = 1, .addr = REG_WDATA,   .size = 4, .data = 0x12345678 },
-        { .is_write = 1, .addr = REG_CONTROL, .size = 4, .data = CTRL_START | CTRL_WRITE },
+        make_msg(1, 0, REG_ADDR,    TEST_ADDR + 8),
+        make_msg(1, 0, REG_LEN,     4),
+        make_msg(1, 0, REG_WDATA,   0x12345678),
+        make_msg(1, 0, REG_CONTROL, CTRL_START | CTRL_WRITE),
 
         // === Read back from SRAM address 0x1000 ===
-        { .is_write = 1, .addr = REG_ADDR,    .size = 4, .data = TEST_ADDR },       // Set target address
-        { .is_write = 1, .addr = REG_LEN,     .size = 4, .data = 4 },               // Set length
-        { .is_write = 1, .addr = REG_CONTROL, .size = 4, .data = CTRL_START },      // Execute read (no CTRL_WRITE)
-        { .is_write = 0, .addr = REG_RDATA,   .size = 4, .data = 0 },               // Read result -> expect 0xDEADBEEF
+        make_msg(1, 0, REG_ADDR,    TEST_ADDR),
+        make_msg(1, 0, REG_LEN,     4),
+        make_msg(1, 0, REG_CONTROL, CTRL_START),
+        make_msg(0, 0, REG_RDATA,   0),  // expect 0xDEADBEEF
 
         // === Read back from SRAM address 0x1004 ===
-        { .is_write = 1, .addr = REG_ADDR,    .size = 4, .data = TEST_ADDR + 4 },
-        { .is_write = 1, .addr = REG_LEN,     .size = 4, .data = 4 },
-        { .is_write = 1, .addr = REG_CONTROL, .size = 4, .data = CTRL_START },
-        { .is_write = 0, .addr = REG_RDATA,   .size = 4, .data = 0 },               // expect 0xCAFEBABE
+        make_msg(1, 0, REG_ADDR,    TEST_ADDR + 4),
+        make_msg(1, 0, REG_LEN,     4),
+        make_msg(1, 0, REG_CONTROL, CTRL_START),
+        make_msg(0, 0, REG_RDATA,   0),  // expect 0xCAFEBABE
 
         // === Read back from SRAM address 0x1008 ===
-        { .is_write = 1, .addr = REG_ADDR,    .size = 4, .data = TEST_ADDR + 8 },
-        { .is_write = 1, .addr = REG_LEN,     .size = 4, .data = 4 },
-        { .is_write = 1, .addr = REG_CONTROL, .size = 4, .data = CTRL_START },
-        { .is_write = 0, .addr = REG_RDATA,   .size = 4, .data = 0 },               // expect 0x12345678
+        make_msg(1, 0, REG_ADDR,    TEST_ADDR + 8),
+        make_msg(1, 0, REG_LEN,     4),
+        make_msg(1, 0, REG_CONTROL, CTRL_START),
+        make_msg(0, 0, REG_RDATA,   0),  // expect 0x12345678
+
+        // DMA test message
+        make_dma_msg(1, WEIGHT_BASE_ADDR, tmp_buf, DMA_BUFFER_SIZE),
+
+        // === Read back from SRAM address 0x1000 ===
+        make_msg(1, 0, REG_ADDR,    TEST_ADDR),
+        make_msg(1, 0, REG_LEN,     4),
+        make_msg(1, 0, REG_CONTROL, CTRL_START),
+        make_msg(0, 0, REG_RDATA,   0),  // expect DMA's message
+
+        // === Read back from SRAM address 0x1004 ===
+        make_msg(1, 0, REG_ADDR,    TEST_ADDR + 4),
+        make_msg(1, 0, REG_LEN,     4),
+        make_msg(1, 0, REG_CONTROL, CTRL_START),
+        make_msg(0, 0, REG_RDATA,   0),  // expect DMA's message
+
+        // === Read back from SRAM address 0x1008 ===
+        make_msg(1, 0, REG_ADDR,    TEST_ADDR + 8),
+        make_msg(1, 0, REG_LEN,     4),
+        make_msg(1, 0, REG_CONTROL, CTRL_START),
+        make_msg(0, 0, REG_RDATA,   0),  // expect DMA's message
     };
 
     struct bridge_msg response;
     int num_msgs = sizeof(msgs) / sizeof(msgs[0]);
 
     for (int i = 0; i < num_msgs; i++) {
-        // Send message
         send(sock, &msgs[i], sizeof(struct bridge_msg), 0);
 
         // Wait for ACK/response
         recv(sock, &response, sizeof(struct bridge_msg), 0);
 
-
-        printf("%s [0x%02lx] sent=0x%08x | status: %d ACK: is_write=%d addr=0x%02lx data=0x%08x\n",
-                       msgs[i].is_write ? "WR" : "RD",
-        (unsigned long)msgs[i].addr,
-                       msgs[i].data,
-                       
-                       response.status,
-                       response.is_write,
-        (unsigned long)response.addr,
-                       response.data);
-
+        printf("%s [0x%02lx] sent=0x%08x | ACK: status=%d is_write=%d is_dma=%d addr=0x%02lx data=0x%08x\n",
+               msgs[i].is_write ? "WR" : "RD",
+               (unsigned long)msgs[i].addr,
+               get_data_u32(&msgs[i]),
+               response.status,
+               response.is_write,
+               response.is_dma,
+               (unsigned long)response.addr,
+               get_data_u32(&response));    
     }
 
     close(sock);
