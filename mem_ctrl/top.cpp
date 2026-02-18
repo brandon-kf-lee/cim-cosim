@@ -18,7 +18,7 @@ int sc_main(int argc, char* argv[]) {
 
     // IRQ wiring
     sc_core::sc_signal<bool> ctrl_irq_sig("ctrl_irq_sig");
-    sc_core::sc_signal<bool> dma_irq_sig("dma_irq_sig");
+    //sc_core::sc_signal<bool> dma_irq_sig("dma_irq_sig");
     
     // Mem controller (CTRL) interrupts
     // TODO: Rename irq to ctrl_irq
@@ -26,8 +26,8 @@ int sc_main(int argc, char* argv[]) {
     bg.irq(ctrl_irq_sig);
     
     // DMA interrupts
-    mc.dma_irq(dma_irq_sig);
-    bg.dma_irq(dma_irq_sig);
+    // mc.dma_irq(dma_irq_sig);
+    // bg.dma_irq(dma_irq_sig);
 
     sc_core::sc_start();
 
