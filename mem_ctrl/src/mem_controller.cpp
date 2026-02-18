@@ -20,22 +20,23 @@ Mem_Controller::Mem_Controller(sc_module_name name):
     sc_module(name), 
     t_cpu_socket("t_cpu_socket"), 
     i_sram_socket("i_sram_socket"), 
-    irq("irq"),
-    dma_irq("dma_irq") {
+    irq("irq")
+    // dma_irq("dma_irq") 
+    {
     
     t_cpu_socket.register_b_transport(this, &Mem_Controller::b_transport);
 
     // Initialize interrupts
     irq.initialize(false);
-    dma_irq.initialize(false);
+    // dma_irq.initialize(false);
 
     // Allocate DMA buffer
-    dma_buffer = new uint8_t[DMA_BUFFER_SIZE];
+    // dma_buffer = new uint8_t[DMA_BUFFER_SIZE];
     
     // Start DMA engine thread & irq managers
     // TODO: is this the proper way to start a SystemC thread?
-    SC_THREAD(dma_engine);
-    SC_THREAD(dma_irq_manager);
+    //SC_THREAD(dma_engine);
+    // SC_THREAD(dma_irq_manager);
     SC_THREAD(irq_manager);
 }
 
@@ -46,7 +47,7 @@ Mem_Controller::Mem_Controller(sc_module_name name):
  * Clean up dynamically allocated memory controller resources
  */
 Mem_Controller::~Mem_Controller(){
-    delete[] dma_buffer;
+    // delete[] dma_buffer;
 }
 
 
@@ -64,20 +65,26 @@ Mem_Controller::~Mem_Controller(){
  */
 void Mem_Controller::b_transport(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
     uint32_t addr = static_cast<uint32_t>(trans.get_address());
-    uint32_t len = trans.get_data_length();
+    //uint32_t len = trans.get_data_length();
 
     // Enforce register alignment rules
     // Treat address as offset (since TB binds directly to MC)
-    if (addr + len > REG_SPACE || len != 4 || (addr & 0x3)) {
-        trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
-        return;
-    }
+    // if (addr + len > REG_SPACE || len != 4 || (addr & 0x3)) {
+    //     trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
+    //     return;
+    // }
 
     // Route to appropriate register handler
     if (addr < 0x20) {
         ctrl_handler(trans, delay);  // 0x00-0x1F: Control registers
-    } else if (addr < 0x40) {
-        dma_handler(trans, delay);   // 0x20-0x3F: DMA registers  
+
+    // Is bulk data transfer to CIM data region
+    } else if (addr >= CIM_DATA_REGION) {
+        dma_handler(trans, delay);
+
+    // } else if (addr < 0x40) {
+    //     dma_handler(trans, delay);   // 0x20-0x3F: DMA registers  
+    // }
     } else {
         trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
     }
@@ -99,10 +106,12 @@ void Mem_Controller::ctrl_handler(tlm::tlm_generic_payload& trans, sc_core::sc_t
     auto cmd  = trans.get_command();                        // READ or WRITE
     auto addr = static_cast<uint32_t>(trans.get_address()); // Register offset
     auto ptr  = trans.get_data_ptr();                       // Data payload buffer
+    auto len  = trans.get_data_length();
 
     uint32_t data = 0;
     // WRITE, write to specified registers based on what the CPU requests
     if (cmd == tlm::TLM_WRITE_COMMAND) {
+        
         std::memcpy(&data, ptr, 4); // Copy received data into data variable for assignment
         
         switch (addr) {
@@ -161,7 +170,7 @@ void Mem_Controller::ctrl_handler(tlm::tlm_generic_payload& trans, sc_core::sc_t
 }
 
 /**
- * Handle CPU access to DMA registers for bulk memory transfers, implements memory-mapped DMA control interface 
+ * Handle bulk transfer of data to/from SRAM (Used for DMA transactions)
  *
  * @param trans TLM transaction payload with command, address, data
  * @param delay SystemC time delay
@@ -172,101 +181,105 @@ void Mem_Controller::ctrl_handler(tlm::tlm_generic_payload& trans, sc_core::sc_t
  *
  * Note:
  *   - Support for both 32-bit and 64-bit host addresses.
- *   - W1C semantics for DMA_DONE and DMA_ERR status bits
- *   - DMA engine triggered when DMA_START bit is written
  */
 void Mem_Controller::dma_handler(tlm::tlm_generic_payload& trans, sc_core::sc_time& delay) {
-    auto cmd = trans.get_command();
-    auto addr = static_cast<uint32_t>(trans.get_address());
-    auto ptr = trans.get_data_ptr();
+
+    /*  
+        Do work in burst mode: https://www.geeksforgeeks.org/computer-organization-architecture/direct-memory-access-dma-controller-in-computer-architecture/
+
+            In Burst Mode, the DMA controller takes full control of the system bus and transfers the entire block of data in one go.
+            The bus is not handed back to the CPU until the entire data transfer is complete.
+            This mode is efficient for large data transfers but can delay CPU operations.
+
+        Client loads data into memory
+        DMA transfer request:
+        1. Set source addr reg
+            sc_dev gets the source address (QEMU guest memory address), stores in sc_dev's dma_src register
+        2. Set dest addr reg
+            sc_dev gets the destination address (CIM SRAM memory address (e.g. WEIGHT_BASE_ADDR)), stores in sc_dev's dma_dst register
+        3. Set len reg
+            sc_dev gets the number of bytes to read (4KB max), stores in sc_dev's dma_len register
+        4. Set start reg
+            sc_dev_dma starts running
+                QEMU DMA receives start signal and reads client memory pointed to by dma_src into temp buffer
+                Sends block of data, dest, and len over socket to bridge
+            
+            (SystemC land)
+            Bridge packages message as TLM transaction, sending the block of data to controller
+            Memory controller forwards transaction to SRAM (sending data length and data pointer)
+     */
+
+    auto cmd  = trans.get_command();
+    auto addr = static_cast<uint32_t>(trans.get_address());  // Destinaton address
+    auto ptr  = trans.get_data_ptr();                        // Source data
+    auto len  = trans.get_data_length();                     // Data length
 
     // Validate SRAM address bounds
-    if (dma_dst_addr + dma_len > SRAM_SIZE) {
+    if (addr + len > SRAM_SIZE) {
         printf("   DMA: ERROR - SRAM overflow error.");
-        dma_status |= DMA_ERR;
+        trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
         return;
     }
 
-    uint32_t data = 0;
+    // Validate transfer parameters
+    if (len == 0) {
+        printf("   DMA: ERROR - len (%d) is 0\n", len);
+        // dma_status |= DMA_ERR;
+        // dma_status &= ~DMA_BUSY;
+        // dma_irq_update_event.notify();
+        // wait(SC_ZERO_TIME);
+        trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
+        return;
+    }
+
     // WRITE, write to specified registers based on what the CPU requests
     if (cmd == tlm::TLM_WRITE_COMMAND) {
-        std::memcpy(&data, ptr, 4);
+
+        // Taken from DMA Engine
+
+        printf("   Starting bulk transfer of %d bytes\n", len);
         
-        switch (addr) {
-            case DMA_CONTROL:
-                dma_control = data;
-                if (data & DMA_START) {
-
-                    // Only start if not currently busy
-                    if (dma_status & DMA_BUSY) {
-                        printf("   DMA: ERROR: Cannot start transfer while busy\n");
-                        dma_status |= DMA_ERR;
-                        break;
-                    }
-                    // TODO: Is this necessary? dma_engine will set these bits
-                    // dma_status = 0;  // Clears DONE, ERR, and any other status bits
-                    // dma_irq_update_event.notify(); // Update IRQ immediately to go LOW
-                    // wait(SC_ZERO_TIME);
-
-#if HOST_64BIT
-                    uint64_t full_src_addr = (static_cast<uint64_t>(dma_src_addr_hi) << 32) | dma_src_addr_lo;
-                    printf("CPU: Starting DMA transfer (%d bytes: 0x%016lX -> 0x%08X)\n", 
-                           dma_len, full_src_addr, dma_dst_addr);
-#else
-                    printf("CPU: Starting DMA transfer (%d bytes: 0x%08X -> 0x%08X)\n", 
-                           dma_len, dma_src_addr, dma_dst_addr);
-#endif
-                    dma_start_event.notify();
-                }
-                break;
-            
-#if HOST_64BIT
-            case DMA_SRC_ADDR_LO: dma_src_addr_lo = data; break;
-            case DMA_SRC_ADDR_HI: dma_src_addr_hi = data; break;
-#else
-            case DMA_SRC_ADDR: dma_src_addr = data; break;
-#endif
-            case DMA_DST_ADDR: dma_dst_addr = data; break;
-            case DMA_LENGTH:   dma_len = data; break;
-
-            // W1C (write-one-to-clear) for DONE and ERR bits
-            case DMA_STATUS:
-                if (data & DMA_DONE) {
-                    dma_status &= ~DMA_DONE;
-                }
-                if (data & DMA_ERR) {
-                    dma_status &= ~DMA_ERR;
-                }
-                dma_irq_update_event.notify();
-                wait(SC_ZERO_TIME);
-                break;
-
-        }
-    // READ, send data from respective registers to the CPU 
-    } else if (cmd == tlm::TLM_READ_COMMAND) {
-        switch (addr) {
-#if HOST_64BIT
-            case DMA_SRC_ADDR_LO: data = dma_src_addr_lo; break;
-            case DMA_SRC_ADDR_HI: data = dma_src_addr_hi; break;
-#else
-            case DMA_SRC_ADDR: data = dma_src_addr; break;
-#endif
-            case DMA_CONTROL:  data = dma_control; break;
-            case DMA_DST_ADDR: data = dma_dst_addr; break;
-            case DMA_LENGTH:   data = dma_len; break;
-            case DMA_STATUS:   data = dma_status; break;
-            default:
-                trans.set_response_status(tlm::TLM_ADDRESS_ERROR_RESPONSE);
-                return;
-        }
-        std::memcpy(ptr, &data, 4);
+        // Set busy status
+        // dma_status = DMA_BUSY;
+        // dma_status &= ~DMA_DONE;
+        // dma_irq_update_event.notify();
+        // wait(SC_ZERO_TIME);
     
-    //ERROR
+        
+        // Reconstruct source pointer based on host architecture
+// #if HOST_64BIT
+//         // 64-bit host: Reconstruct pointer from high/low registers
+//         // NOTE: No validation performed, caller responsible for valid addresses
+//         uint64_t src_addr = (static_cast<uint64_t>(dma_src_addr_hi) << 32) | dma_src_addr_lo;
+//         const uint8_t* src_ptr = reinterpret_cast<const uint8_t*>(src_addr);
+//         //printf("   DMA: Source reconstructed from HI:0x%08X LO:0x%08X -> %p\n", dma_src_addr_hi, dma_src_addr_lo, src_ptr);
+// #else
+//         // 32-bit host: Direct pointer conversion
+//         const uint8_t* src_ptr = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(dma_src_addr));
+//         //printf("   DMA: Source address: 0x%08X -> %p\n", dma_src_addr, src_ptr);
+// #endif
+        
+        sc_core::sc_time sram_delay = sc_core::SC_ZERO_TIME;
+
+        // Write chunk to destination address
+        tlm::tlm_generic_payload write_trans;
+        prepare_sram_transaction(write_trans, tlm::TLM_WRITE_COMMAND, addr, ptr, len);
+        i_sram_socket->b_transport(write_trans, sram_delay);
+        
+        if (write_trans.get_response_status() != tlm::TLM_OK_RESPONSE) {
+            printf("DMA: ERROR - Bad TLM response from SRAM: %s\n", write_trans.get_response_string().c_str());
+            return;
+        }
+        
+        // Model realistic DMA timing (2ns per byte is typical for modern DMA)
+        wait(SC_ZERO_TIME);
+        //wait(sram_delay + sc_core::sc_time(DMA_BUFFER_SIZE * 2, sc_core::SC_NS));
+
+    // ERROR
     } else {
         trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
         return;
     }
-    
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
 }
 
@@ -371,93 +384,77 @@ void Mem_Controller::start_operation(sc_core::sc_time& delay) {
  *   - Host memory access simulated with memcpy (would be bus transaction in reality)
  *   - Updates DMA status and signals IRQ on completion/error
  */
-void Mem_Controller::dma_engine() {
-    while (true) {
-        // Wait for CPU to start DMA operation
-        wait(dma_start_event);
+//void Mem_Controller::dma_engine() {
+//     while (true) {
+//         // Wait for CPU to start DMA operation
+//         wait(dma_start_event);
         
-        printf("   DMA: Starting transfer of %d bytes\n", dma_len);
+//         printf("   DMA: Starting transfer of %d bytes\n", dma_len);
         
-        // Set busy status
-        dma_status = DMA_BUSY;
-        dma_status &= ~DMA_DONE;
-        dma_irq_update_event.notify();
-        wait(SC_ZERO_TIME);
+//         // Set busy status
+//         // dma_status = DMA_BUSY;
+//         // dma_status &= ~DMA_DONE;
+//         // dma_irq_update_event.notify();
+//         // wait(SC_ZERO_TIME);
         
-        // Validate transfer parameters
-        if (dma_len == 0) {
-            printf("   DMA: ERROR - dma_len (%d) is 0\n", dma_len);
-            dma_status |= DMA_ERR;
-            dma_status &= ~DMA_BUSY;
-            dma_irq_update_event.notify();
-            wait(SC_ZERO_TIME);
-            continue;
-        }
+//         // Validate transfer parameters
+//         if (dma_len == 0) {
+//             printf("   DMA: ERROR - dma_len (%d) is 0\n", dma_len);
+//             // dma_status |= DMA_ERR;
+//             // dma_status &= ~DMA_BUSY;
+//             // dma_irq_update_event.notify();
+//             // wait(SC_ZERO_TIME);
+//             continue;
+//         }
         
-        // Reconstruct source pointer based on host architecture
-#if HOST_64BIT
-        // 64-bit host: Reconstruct pointer from high/low registers
-        // NOTE: No validation performed, caller responsible for valid addresses
-        uint64_t src_addr = (static_cast<uint64_t>(dma_src_addr_hi) << 32) | dma_src_addr_lo;
-        const uint8_t* src_ptr = reinterpret_cast<const uint8_t*>(src_addr);
-        //printf("   DMA: Source reconstructed from HI:0x%08X LO:0x%08X -> %p\n", dma_src_addr_hi, dma_src_addr_lo, src_ptr);
-#else
-        // 32-bit host: Direct pointer conversion
-        const uint8_t* src_ptr = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(dma_src_addr));
-        //printf("   DMA: Source address: 0x%08X -> %p\n", dma_src_addr, src_ptr);
-#endif
+//         // Reconstruct source pointer based on host architecture
+// #if HOST_64BIT
+//         // 64-bit host: Reconstruct pointer from high/low registers
+//         // NOTE: No validation performed, caller responsible for valid addresses
+//         uint64_t src_addr = (static_cast<uint64_t>(dma_src_addr_hi) << 32) | dma_src_addr_lo;
+//         const uint8_t* src_ptr = reinterpret_cast<const uint8_t*>(src_addr);
+//         //printf("   DMA: Source reconstructed from HI:0x%08X LO:0x%08X -> %p\n", dma_src_addr_hi, dma_src_addr_lo, src_ptr);
+// #else
+//         // 32-bit host: Direct pointer conversion
+//         const uint8_t* src_ptr = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(dma_src_addr));
+//         //printf("   DMA: Source address: 0x%08X -> %p\n", dma_src_addr, src_ptr);
+// #endif
+        
+//         sc_core::sc_time sram_delay = sc_core::SC_ZERO_TIME;
+                
+//         // SIMULATION NOTE: In reality, this would be another bus transaction to a seperate system memory module
+//         std::memcpy(dma_buffer, src_ptr, DMA_BUFFER_SIZE);
+        
+//         // Write chunk to destination address
+//         tlm::tlm_generic_payload write_trans;
+//         prepare_sram_transaction(write_trans, tlm::TLM_WRITE_COMMAND, dst_ptr, dma_buffer, DMA_BUFFER_SIZE);
+//         i_sram_socket->b_transport(write_trans, sram_delay);
+        
+//         if (write_trans.get_response_status() != tlm::TLM_OK_RESPONSE) {
+//             printf("DMA: ERROR - Bad TLM response from SRAM: %s\n", write_trans.get_response_string().c_str());
+//             dma_status |= DMA_ERR;
+//             break;
+//         }
+        
+//         // Model realistic DMA timing (2ns per byte is typical for modern DMA)
+//         wait(SC_ZERO_TIME);
+//         //wait(sram_delay + sc_core::sc_time(DMA_BUFFER_SIZE * 2, sc_core::SC_NS));
 
-        // Perform chunked transfer
-        uint32_t remaining = dma_len;
-        uint32_t dst_ptr = dma_dst_addr; // Holds address to increment on
-        uint32_t total_chunks = 0;
-        
-        while (remaining > 0) {
-            sc_core::sc_time sram_delay = sc_core::SC_ZERO_TIME;
-            
-            // Read the maximum amount the buffer allows, or whatever's left
-            uint32_t chunk_size = std::min(remaining, DMA_BUFFER_SIZE);
-            
-            // SIMULATION NOTE: In reality, this would be another bus transaction to a seperate system memory module
-            std::memcpy(dma_buffer, src_ptr, chunk_size);
-            
-            // Write chunk to destination address
-            tlm::tlm_generic_payload write_trans;
-            prepare_sram_transaction(write_trans, tlm::TLM_WRITE_COMMAND, dst_ptr, dma_buffer, chunk_size);
-            i_sram_socket->b_transport(write_trans, sram_delay);
-            
-            if (write_trans.get_response_status() != tlm::TLM_OK_RESPONSE) {
-                printf("DMA: ERROR - Bad TLM response from SRAM: %s\n", write_trans.get_response_string().c_str());
-                dma_status |= DMA_ERR;
-                break;
-            }
-            
-            // Update pointers and remaining count
-            src_ptr += chunk_size;
-            dst_ptr += chunk_size;
-            remaining -= chunk_size;
-            total_chunks++;
-            
-            // Model realistic DMA timing (2ns per byte is typical for modern DMA)
-            wait(SC_ZERO_TIME);
-            //wait(sram_delay + sc_core::sc_time(chunk_size * 2, sc_core::SC_NS));
-        }
+//         // // Completed transfer: set BUSY=0, DONE=1.
+//         // dma_status &= ~DMA_BUSY;
+//         // dma_status |= DMA_DONE;
 
-        // Completed transfer: set BUSY=0, DONE=1.
-        dma_status &= ~DMA_BUSY;
-        dma_status |= DMA_DONE;
+//         // if (dma_status & DMA_ERR) {
+//         //     printf("   DMA: ERROR - Transfer failed with error\n");
+//         // } else {
+//         //     dma_status |= DMA_DONE;
+//         //     printf("   DMA: Transfer complete (%d chunks)\n", total_chunks);
+//         // }
 
-        if (dma_status & DMA_ERR) {
-            printf("   DMA: ERROR - Transfer failed with error\n");
-        } else {
-            dma_status |= DMA_DONE;
-            printf("   DMA: Transfer complete (%d chunks)\n", total_chunks);
-        }
-
-        dma_irq_update_event.notify();
-        wait(SC_ZERO_TIME);
-    }
-}
+//         dma_irq_update_event.notify();
+//         wait(SC_ZERO_TIME);
+//     }
+//}
 
 
 /**
@@ -526,20 +523,20 @@ void Mem_Controller::irq_manager() {
  *   - Waits on dma_irq_update_event for state changes
  *   - DMA IRQ = DMA_IRQEN && DMA_DONE
  */
-void Mem_Controller::dma_irq_manager() {
-    while (true) {
-        wait(dma_irq_update_event);  // Wait for interrupt state change
-        bool enable = (dma_control & DMA_IRQEN) != 0; // Are IRQs enabled?
-        bool done   = (dma_status & DMA_DONE) != 0;   // Is the operation done?
-        dma_irq.write(enable && done);                // Raise IRQ if both is true
+// void Mem_Controller::dma_irq_manager() {
+//     while (true) {
+//         wait(dma_irq_update_event);  // Wait for interrupt state change
+//         bool enable = (dma_control & DMA_IRQEN) != 0; // Are IRQs enabled?
+//         bool done   = (dma_status & DMA_DONE) != 0;   // Is the operation done?
+//         dma_irq.write(enable && done);                // Raise IRQ if both is true
 
-        // bool enable = (dma_control & DMA_IRQEN) != 0;
-        // bool done   = (dma_status & DMA_DONE) != 0;
-        // bool new_irq_state = enable && done;
+//         // bool enable = (dma_control & DMA_IRQEN) != 0;
+//         // bool done   = (dma_status & DMA_DONE) != 0;
+//         // bool new_irq_state = enable && done;
         
-        // printf("    dma_irq updating:\n    DMA IRQ: enable=%d, done=%d, status=0x%08X -> IRQ=%d\n", 
-        //        enable, done, dma_status, new_irq_state);
+//         // printf("    dma_irq updating:\n    DMA IRQ: enable=%d, done=%d, status=0x%08X -> IRQ=%d\n", 
+//         //        enable, done, dma_status, new_irq_state);
 
-        // dma_irq.write(new_irq_state);
-    }
-}
+//         // dma_irq.write(new_irq_state);
+//     }
+// }
