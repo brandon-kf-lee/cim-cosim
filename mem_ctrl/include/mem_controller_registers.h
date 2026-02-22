@@ -31,26 +31,6 @@ enum : uint32_t {
     REG_WDATA   = 0x0C, // Data the CPU wants to write to SRAM
     REG_RDATA   = 0x10, // Data read back from SRAM
     REG_STATUS  = 0x14, // Status bits (BUSY, DONE, ERROR)
-    
-    // DMA Registers (0x20-0x3F)
-#if HOST_64BIT
-    // 64-bit host: Need split address registers
-    DMA_CONTROL     = 0x20, // DMA control bits (START, IRQEN)
-    DMA_SRC_ADDR_LO = 0x24, // DMA source address - low 32 bits
-    DMA_SRC_ADDR_HI = 0x28, // DMA source address - high 32 bits  
-    DMA_DST_ADDR    = 0x2C, // DMA destination address (32-bit SRAM)
-    DMA_LENGTH      = 0x30, // DMA transfer length in bytes
-    DMA_STATUS      = 0x34, // DMA status register
-#else
-    // 32-bit host: Single address register
-    DMA_CONTROL  = 0x20,    // DMA control bits (START, IRQEN)
-    DMA_SRC_ADDR = 0x24,    // DMA source address (32-bit)
-    DMA_DST_ADDR = 0x28,    // DMA destination address (32-bit SRAM)
-    DMA_LENGTH   = 0x2C,    // DMA transfer length in bytes
-    DMA_STATUS   = 0x30,    // DMA status register
-#endif
-    
-    REG_SPACE    = 0x40  // Total MMIO register space size
 };
 
 // CTRL CONTROL bits
@@ -63,18 +43,6 @@ static constexpr uint32_t CTRL_COMPUTE = 1u << 4; // b1000, 0x08
 static constexpr uint32_t STAT_BUSY = 1u << 0;  // b0001, 0x01
 static constexpr uint32_t STAT_DONE = 1u << 1;  // b0010, 0x02
 static constexpr uint32_t STAT_ERR  = 1u << 2;  // b0100, 0x04
-
-// DMA CONTROL bits
-static constexpr uint32_t DMA_START  = 1u << 0;  // 0x01
-static constexpr uint32_t DMA_IRQEN = 1u << 1;  // 0x02
-
-// DMA STATUS bits
-static constexpr uint32_t DMA_BUSY = 1u << 0;   // 0x01
-static constexpr uint32_t DMA_DONE = 1u << 1;   // 0x02
-static constexpr uint32_t DMA_ERR  = 1u << 2;   // 0x04
-
-// Transfer buffer size
-#define DMA_BUFFER_SIZE 4096
 
 // SRAM Size
 static constexpr uint32_t SRAM_SIZE = 262144; // 256KB SRAM
