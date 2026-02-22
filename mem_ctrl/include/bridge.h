@@ -27,6 +27,7 @@ struct bridge_msg {
     uint32_t size;
 
     uint8_t  data[DMA_BUFFER_SIZE];
+    uint64_t simulated_ns;
 
     int8_t status;
 } __attribute__((packed));  /* Ensure no padding */
@@ -52,6 +53,9 @@ private:
     tlm::tlm_response_status mmio_write_block(uint32_t addr_offset, uint8_t *value, uint32_t len);
     tlm::tlm_response_status mmio_read(uint32_t addr_offset, uint32_t& value);
     void ctrl_wait();
+
+    /* Variables to store delay time of each transaction */
+    sc_core::sc_time t_start, t_end, t_delta;
 
     // // Abstracted memory controller writes
     // void load_matrix(float* matrix, int row_size, int col_size, uint32_t base_addr);

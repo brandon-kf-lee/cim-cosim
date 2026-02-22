@@ -37,6 +37,9 @@ void Bridge::run() {
         // TODO: may have to use ctrl_wait() after setting the REG_CONTROL register to START to ensure controller operations are complete before moving on (e.g trying to read data being requested)
         printf("[DEBUG] Received: is_write: %d, is_dma: %d, addr: 0x%lx, size: %d \n", msg.is_write, msg.is_dma, msg.addr, msg.size);
 
+        /* Mark time before controller does work */
+        t_start = sc_core::sc_time_stamp();
+
         /* Control register write */
         if (msg.is_write && !msg.is_dma) {
             
@@ -72,6 +75,16 @@ void Bridge::run() {
             }
             printf("[DEBUG] READ:     is_write: %d, addr: 0x%lx, data: 0x%x, size: %d \n\n", msg.is_write, msg.addr, read_data, msg.size);
         }
+
+        // TEST DELAY
+        wait(1000, SC_NS);
+
+        /* Mark time after controller finishes work */
+        t_end = sc_core::sc_time_stamp();
+        t_delta = t_end - t_start;
+        msg.simulated_ns = static_cast<uint64_t>(t_delta.to_seconds() * 1e9);
+
+        // TODO: Capture IRQ state and forward to sc_dev?
 
         send(client_fd, &msg, sizeof(msg), 0);
     }
@@ -138,116 +151,3 @@ void Bridge::ctrl_wait() {
     mmio_write(REG_STATUS, STAT_DONE);
     wait(SC_ZERO_TIME);
 }
-
-// void Bridge::dma_wait() {    
-//     // // Check if DMA already completed
-//     // if (dma_irq.read()) {
-//     //     printf("  CPU: DMA already completed (signal HIGH)\n");
-//     // } else {
-//     //     printf("  CPU: Waiting for DMA interrupt...\n");
-//     //     wait(dma_irq.posedge_event());
-//     //     printf("  CPU: DMA IRQ received!\n");
-//     // }
-
-//     // Skip waiting if already completed
-//     if (!dma_irq.read()) wait(dma_irq.posedge_event());
-    
-//     // Clear DMA status
-//     mmio_write(DMA_STATUS, DMA_DONE);
-//     wait(SC_ZERO_TIME);
-// }
-
-// void Bridge::dma_transfer(const void* src_data, uint32_t size, uint32_t dst_addr) {
-//     printf("CPU: Programming DMA for %d byte transfer to 0x%08X\n", size, dst_addr);
-
-// #if HOST_64BIT
-//     // Split 64-bit pointer into two 32-bit parts
-//     uint64_t src_addr = reinterpret_cast<uint64_t>(src_data);
-//     uint32_t addr_lo = static_cast<uint32_t>(src_addr & 0xFFFFFFFF);
-//     uint32_t addr_hi = static_cast<uint32_t>((src_addr >> 32) & 0xFFFFFFFF);
-    
-//     printf("CPU: Source address: 0x%016lX (HI: 0x%08X, LO: 0x%08X)\n", src_addr, addr_hi, addr_lo);
-    
-//     mmio_write(DMA_SRC_ADDR_LO, addr_lo);
-//     mmio_write(DMA_SRC_ADDR_HI, addr_hi);
-// #else
-//     // Direct 32-bit address
-//     uint32_t src_addr = reinterpret_cast<uint32_t>(src_data);
-//     printf("CPU: Source address: 0x%08X\n", src_addr);
-    
-//     mmio_write(DMA_SRC_ADDR, src_addr);
-// #endif
-//     mmio_write(DMA_DST_ADDR, dst_addr);
-//     mmio_write(DMA_LENGTH, size);
-//     mmio_write(DMA_CONTROL, DMA_START | DMA_IRQEN);
-    
-//     printf("CPU: DMA transfer programmed...\n");
-// }
-
-// // mmio_write a flattened float matrix one word at a time
-// // Word size = 4 bytes, same as one float value
-// void Bridge::load_matrix(float* matrix, int row_size, int col_size, uint32_t base_addr){
-//     for(int row = 0; row < row_size; ++row){
-//         for(int col = 0; col < col_size; ++col){
-//             // Address works like [row][col], with sizeof(float) word alignment
-//             uint32_t addr = base_addr + (((row * col_size) + col) * sizeof(float));
-//             mmio_write(REG_ADDR, addr);
-//             mmio_write(REG_LEN, 4);
-
-//             // Bit-copy float into uint for transportation
-//             uint32_t float_to_uint;
-//             memcpy(&float_to_uint, &matrix[(row * col_size) + col], sizeof(float));
-
-//             mmio_write(REG_WDATA, float_to_uint);
-//             mmio_write(REG_CONTROL, CTRL_IRQEN | CTRL_WRITE | CTRL_START);
-            
-//             ctrl_wait();
-//         }
-//     }
-// }
-
-// // mmio_write a float vector one word at a time
-// // Word size = 4 bytes, same as one float value
-// void Bridge::load_f_vector(float* vector, int size, uint32_t base_addr){
-//     for(int i = 0; i < size; ++i){
-//         uint32_t addr = base_addr + (i * sizeof(float));
-//         mmio_write(REG_ADDR, addr);
-//         mmio_write(REG_LEN, 4);
-
-//         // Bit-copy float into uint for transportation
-//         uint32_t float_to_uint;
-//         memcpy(&float_to_uint, &vector[i], 4);
-
-//         mmio_write(REG_WDATA, float_to_uint);
-//         mmio_write(REG_CONTROL, CTRL_IRQEN | CTRL_WRITE | CTRL_START);
-        
-//         ctrl_wait();
-//     }
-// }
-
-// // mmio_write a uint8_t vector one word at a time, meaning 4 uint8_t packed into one word
-// void Bridge::load_u8_vector(uint8_t* vector, int size, uint32_t base_addr){
-//     int words_needed = (size + 3) / 4; // Round up to handle partial words
-    
-//     for(int word = 0; word < words_needed; ++word){
-//         uint32_t addr = base_addr + (word * sizeof(uint32_t));
-//         mmio_write(REG_ADDR, addr);
-//         mmio_write(REG_LEN, 4);
-
-//         // Pack 4 uint8_t values into one uint32_t word package by bit shifting each value into place
-//         // Format is little-endian
-//         uint32_t packed_word = 0;
-//         for(int byte = 0; byte < 4; ++byte){
-//             int index = (word * 4) + byte;
-//             if(index < size){
-//                 packed_word |= ((uint32_t)vector[index]) << (byte * 8);
-//             }
-//             // If index >= size, leave as 0 (padding)
-//         }
-
-//         mmio_write(REG_WDATA, packed_word);
-//         mmio_write(REG_CONTROL, CTRL_IRQEN | CTRL_WRITE | CTRL_START);
-        
-//         ctrl_wait();
-//     }
-// }
