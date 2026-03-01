@@ -77,15 +77,16 @@ void Bridge::run() {
         }
 
         // TEST DELAY
-        wait(1000, SC_NS);
+        //wait(1000, SC_NS);
 
         /* Mark time after controller finishes work */
         t_end = sc_core::sc_time_stamp();
         t_delta = t_end - t_start;
         msg.simulated_ns = static_cast<uint64_t>(t_delta.to_seconds() * 1e9);
 
-        // TODO: Capture IRQ state and forward to sc_dev?
-
+        /* Read memory controller's current IRQ state and forward to QEMU */ 
+        msg.ctrl_irq = irq.read();
+        
         send(client_fd, &msg, sizeof(msg), 0);
     }
 }

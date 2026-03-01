@@ -21,7 +21,8 @@
 struct bridge_msg {
     uint8_t  is_write;
     uint8_t  is_dma;
-    uint16_t reserved; /* Ensure word alignment */
+    uint8_t  ctrl_irq; /* IRQ forwarded from SystemC memory controller*/
+    uint8_t  reserved; /* Ensure word alignment */
 
     uint64_t addr;
     uint32_t size;
