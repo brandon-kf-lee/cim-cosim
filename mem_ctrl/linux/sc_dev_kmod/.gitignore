@@ -1,0 +1,10 @@
+# ignore everything in this directory
+*
+
+# allow these
+!*.c
+!Makefile
+!.gitignore
+
+# still ignore generated mod files
+*.mod.c
