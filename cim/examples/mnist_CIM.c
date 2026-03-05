@@ -1,13 +1,16 @@
-/* mnist_demo.c - Example program using the CIM userspace library
+/* mnist_CIM.c - MNIST inference using the CIM userspace library
  *
  * Workflow
  * - read mnist_network.bin and MNIST_0.bin from the guest filesystem
  * - DMA weights/bias/input into CIM SRAM (library uses paged DMA workaround)
  * - start compute (IRQ-driven)
  * - read back 10 output floats using IRQ-driven reads
- * - softmax + argmax
- *
+ * - softmax
+ * Author: Brandon Lee, brandon.kf.lee@gmail.com
+ *     Derived from: Andrew Carter, https://github.com/AndrewCarterUK/mnist-neural-network-plain-c
  */
+
+#define _POSIX_C_SOURCE 200809L  // For time.h
 
 #include "cim.h"
 #include "cim_mnist.h"
@@ -17,6 +20,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+// Convert a pixel value from 0-255 to one from 0 to 1
+#define PIXEL_SCALE(x) (((float) (x)) / 255.0f)
 
 /* Defaults (if no CLI args provided) */
 #define DEFAULT_PATH_NETWORK   "binaries/mnist_network.bin"
@@ -75,13 +82,22 @@ static void neural_network_softmax(float *activations, int length)
     }
 }
 
-int main(int argc, char **argv)
+int main(int argc, char* argv[])
 {
+
+    /* Timing */
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     int rc;
     cim_dev_t *dev = NULL;
 
+    /* Neural network */
     neural_network_t network;
     mnist_image_t image;
+    float activations[MNIST_LABELS] = {0};
+    float max_activation = activations[0];
+    int prediction = 0;
 
     const char *path_network = DEFAULT_PATH_NETWORK;
     const char *path_image   = DEFAULT_PATH_IMAGE_0;
@@ -93,7 +109,7 @@ int main(int argc, char **argv)
     if (argc >= 2) path_network = argv[1];
     if (argc >= 3) path_image   = argv[2];
 
-    printf("CIM MNIST Demo\n\n");
+    printf("CIM MNIST Demo (CIM) \n\n");
     printf("Network file: %s\n", path_network);
     printf("Image file:   %s\n\n", path_image);
 
@@ -107,6 +123,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Pre-normalize input image */
+    float input_f[MNIST_IMAGE_SIZE];
+    for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
+        input_f[j] = ((float)image.pixels[j]) / 255.0f;
+    }
+
+    /* Configure CIM device */
     cim_config_t cfg = {0};
     cfg.dma_mode = CIM_DMA_PAGED;      /* safe default (multi-page buffers) */
     cfg.timeouts.dma_ms = 1000;
@@ -119,8 +142,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Load weights, bias, input into SRAM */
     printf("Loading weights/bias/input into SRAM using DMA\n");
-
     rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network.W, sizeof(network.W));
     if (rc != CIM_OK) {
         fprintf(stderr, "DMA weights failed: %s (%d)\n", cim_strerror(rc), rc);
@@ -135,26 +158,24 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, image.pixels, sizeof(image.pixels));
+    rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, input_f, sizeof(input_f));
     if (rc != CIM_OK) {
         fprintf(stderr, "DMA image failed: %s (%d)\n", cim_strerror(rc), rc);
         cim_close(dev);
         return 1;
     }
 
+    /* Run inference once (using CIM) */
     printf("CPU: All DMA transfers complete, starting compute operation...\n");
-
     rc = cim_compute(dev);
     if (rc != CIM_OK) {
         fprintf(stderr, "cim_compute failed: %s (%d)\n", cim_strerror(rc), rc);
         cim_close(dev);
         return 1;
     }
-
     printf("CPU: Compute operation completed, reading results...\n");
 
-    float activations[MNIST_LABELS] = {0};
-
+    /* Read output from device */
     printf("CPU: Reading %d activation values...\n", MNIST_LABELS);
     for (int i = 0; i < MNIST_LABELS; ++i) {
         uint32_t addr = OUTPUT_BASE_ADDR + (uint32_t)(i * sizeof(float));
@@ -166,11 +187,10 @@ int main(int argc, char **argv)
         }
     }
 
+    /* Run softmax normalization */
     neural_network_softmax(activations, MNIST_LABELS);
 
-    int prediction = 0;
-    float max_activation = activations[0];
-
+    /* Find largest activation */
     for (int i = 0; i < MNIST_LABELS; ++i) {
         printf("%d: %f\n", i, activations[i]);
         if (activations[i] > max_activation) {
@@ -180,6 +200,24 @@ int main(int argc, char **argv)
     }
 
     printf("Predicted number: %d\n", prediction);
+
+    /* Timing */
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    /* Read correction from device */
+    int64_t correction;
+    cim_read_correction(dev, &correction);
+
+    int64_t wall_ns = (end.tv_sec - start.tv_sec) * 1000000000LL
+                    + (end.tv_nsec - start.tv_nsec);
+
+    int64_t adjusted_ns = wall_ns - correction;
+
+    printf("Wall time:     %ld ns\n", wall_ns);
+    printf("Correction:    %ld ns\n", correction);
+    printf("Adjusted time: %ld ns\n", adjusted_ns);
+
+    cim_clear_correction(dev);
 
     cim_close(dev);
     return 0;
