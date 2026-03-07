@@ -1,5 +1,8 @@
 /* cim_registers.h - Compute-In-Memory (CIM) includes, register definitions and structs */
 
+#ifndef CIM_REGISTERS_H
+#define CIM_REGISTERS_H
+
 /* ---------- Device register definitions ---------- */
 
 /* Memory Controller regs (SystemC side) */
@@ -25,10 +28,14 @@
 #define DMA_LEN       0x30          // Length of transfer
 
 #define DMA_START     (1u << 0)     // b00001
+#define DMA_DIR_READ  (1u << 1)     // b0000x: RAM->SRAM, b0001x: SRAM->RAM 
 
 /* Timing regs */
 #define REG_EXCESS_TIME_LO  0x40    // SystemC simulator time correction (upper 32-bits)
 #define REG_EXCESS_TIME_HI  0x44    // SystemC simulator time correction (upper 32-bits)
+
+#define REG_TIMING_CLEAR    0x48  // Write to clear timing data
+#define TIMING_CLEAR        (1 << 0) 
 
 /* IRQ regs (QEMU-device side) */
 #define REG_IRQ_STATUS  0x60        // Read: which IRQs are pending
@@ -57,3 +64,5 @@ struct cim_dev {
 
     int debug;
 };
+
+#endif //CIM_REGISTERS_H
