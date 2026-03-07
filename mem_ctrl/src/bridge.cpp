@@ -28,15 +28,30 @@ void Bridge::run() {
         bridge_msg msg{};
         ssize_t n = recv(client_fd, &msg, sizeof(msg), 0);
         
-        // If no data received, connection closed
+        /* If no data received, connection closed */
         if (n <= 0) {
-            printf("[SystemC] Client disconnected\n");
+            fprintf(stderr, "[SystemC] Client disconnected\n");
             break;  // or wait for new connection
         }
 
-        // TODO: may have to use ctrl_wait() after setting the REG_CONTROL register to START to ensure controller operations are complete before moving on (e.g trying to read data being requested)
-        printf("[DEBUG] Received: is_write: %d, is_dma: %d, addr: 0x%lx, size: %d \n", msg.is_write, msg.is_dma, msg.addr, msg.size);
+        /* Ensure DMA buffer size isn't exceeded */
+        if (msg.is_dma && msg.size > DMA_BUFFER_SIZE) {
+            fprintf(stderr, "[ERROR] DMA size %u exceeds DMA_BUFFER_SIZE %u\n",
+                    msg.size, (unsigned)DMA_BUFFER_SIZE);
+            msg.status = tlm::TLM_BURST_ERROR_RESPONSE;
 
+            /* still fill in timing/irq below */
+            t_start = sc_core::sc_time_stamp();
+            t_end   = t_start;
+            t_delta = sc_core::SC_ZERO_TIME;
+            msg.simulated_ns = 0;
+            msg.ctrl_irq = irq.read();
+
+            send(client_fd, &msg, sizeof(msg), 0);
+            continue;  // go wait for next message
+        }
+        
+        // Received: is_write: %d, is_dma: %d, addr: 0x%lx, size: %d \n", msg.is_write, msg.is_dma, msg.addr, msg.size);
         /* Mark time before controller does work */
         t_start = sc_core::sc_time_stamp();
 
@@ -49,21 +64,12 @@ void Bridge::run() {
             msg.status = mmio_write(msg.addr, ctrl);
             
             if (msg.status != tlm::TLM_OK_RESPONSE) {
-                printf("[ERROR] WRITE FAILED: addr=0x%lx, status=%d\n", msg.addr, msg.status);
+                fprintf(stderr, "[ERROR] WRITE FAILED: addr=0x%lx, status=%d\n", msg.addr, msg.status);
             }       
-            printf("[DEBUG] WRITE:    is_write: %d, addr: 0x%lx, data: 0x%x, size: %d \n\n", msg.is_write, msg.addr, ctrl, msg.size);
+            //printf("[DEBUG] WRITE:    is_write: %d, addr: 0x%lx, data: 0x%x, size: %d \n\n", msg.is_write, msg.addr, ctrl, msg.size);
         
-        /* DMA block write */
-        } else if (msg.is_write && msg.is_dma) {
-            msg.status = mmio_write_block(msg.addr, msg.data, msg.size);
-
-            if (msg.status != tlm::TLM_OK_RESPONSE) {
-                printf("[ERROR] DMA WRITE FAILED: addr=0x%lx size=%d\n", msg.addr, msg.size);
-            }
-            printf("[DEBUG] DMA WRITE: addr=0x%lx size=%d\n\n", msg.addr, msg.size);
-
         /* Control register read */
-        } else {
+        } else if (!msg.is_write && ! msg.is_dma) {
             uint32_t read_data;
             msg.status = mmio_read(msg.addr, read_data);
             
@@ -71,9 +77,31 @@ void Bridge::run() {
             memcpy(msg.data, &read_data, sizeof(read_data));
             
             if (msg.status != tlm::TLM_OK_RESPONSE) {
-                printf("[ERROR] READ FAILED: addr=0x%lx, status=%d\n", msg.addr, msg.status);
+                fprintf(stderr, "[ERROR] READ FAILED: addr=0x%lx, status=%d\n", msg.addr, msg.status);
             }
-            printf("[DEBUG] READ:     is_write: %d, addr: 0x%lx, data: 0x%x, size: %d \n\n", msg.is_write, msg.addr, read_data, msg.size);
+            //printf("[DEBUG] READ:     is_write: %d, addr: 0x%lx, data: 0x%x, size: %d \n\n", msg.is_write, msg.addr, read_data, msg.size);
+
+        /* DMA block write */
+        } else if (msg.is_write && msg.is_dma) {
+            msg.status = mmio_write_block(msg.addr, msg.data, msg.size);
+
+            if (msg.status != tlm::TLM_OK_RESPONSE) {
+                printf("[ERROR] DMA WRITE FAILED: addr=0x%lx size=%d\n", msg.addr, msg.size);
+            }
+            //printf("[DEBUG] DMA WRITE: addr=0x%lx size=%d\n\n", msg.addr, msg.size);
+        
+        /* DMA block read */
+        } else if (!msg.is_write && msg.is_dma) {
+            msg.status = mmio_read_block(msg.addr, msg.data, msg.size);
+
+            if (msg.status != tlm::TLM_OK_RESPONSE) {
+                printf("[ERROR] DMA READ FAILED: addr=0x%lx size=%d\n", msg.addr, msg.size);
+            }
+            //printf("[DEBUG] DMA READ: addr=0x%lx size=%d\n\n", msg.addr, msg.size);
+        
+        /* Unknown command */
+        } else {
+            fprintf(stderr, "[ERROR] Unknown command.\n");
         }
 
         // TEST DELAY
@@ -109,23 +137,6 @@ tlm::tlm_response_status Bridge::mmio_write(uint32_t addr_offset, uint32_t value
     return trans.get_response_status();
 };
 
-// Helper function to write bulk data to mmio
-tlm::tlm_response_status Bridge::mmio_write_block(uint32_t addr_offset, uint8_t *value, uint32_t len) {    
-    tlm::tlm_generic_payload trans;
-    trans.set_command(tlm::TLM_WRITE_COMMAND);
-    trans.set_address(addr_offset);
-    trans.set_data_length(len);
-    trans.set_streaming_width(len);
-    trans.set_byte_enable_ptr(nullptr);
-    trans.set_dmi_allowed(false);
-    trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
-    trans.set_data_ptr(value);
-
-    tlm_socket->b_transport(trans, delay);
-
-    return trans.get_response_status();
-};
-
 // Helper function to read from mmio
 tlm::tlm_response_status Bridge::mmio_read(uint32_t addr_offset, uint32_t& value) {
     tlm::tlm_generic_payload trans;
@@ -144,11 +155,42 @@ tlm::tlm_response_status Bridge::mmio_read(uint32_t addr_offset, uint32_t& value
     return trans.get_response_status();
 };
 
-void Bridge::ctrl_wait() {
-    // Skip waiting if already completed
-    if (!irq.read()) wait(irq.posedge_event());
-    
-    // Clear status
-    mmio_write(REG_STATUS, STAT_DONE);
-    wait(SC_ZERO_TIME);
+// Helper function to write bulk data to mmio
+tlm::tlm_response_status Bridge::mmio_write_block(uint32_t addr_offset, uint8_t *value, uint32_t len) {    
+    tlm::tlm_generic_payload trans;
+    trans.set_command(tlm::TLM_WRITE_COMMAND);
+    trans.set_address(addr_offset);
+    trans.set_data_length(len);
+    trans.set_streaming_width(len);
+    trans.set_byte_enable_ptr(nullptr);
+    trans.set_dmi_allowed(false);
+    trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+    trans.set_data_ptr(value);
+
+    tlm_socket->b_transport(trans, delay);
+
+    return trans.get_response_status();
+};
+
+// Helper function to read bulk data from mmio
+tlm::tlm_response_status Bridge::mmio_read_block(uint32_t addr_offset, uint8_t *dst, uint32_t len)
+{
+    if (!dst || len == 0) {
+        return tlm::TLM_GENERIC_ERROR_RESPONSE;
+    }
+
+    tlm::tlm_generic_payload trans;
+    trans.set_command(tlm::TLM_READ_COMMAND);
+    trans.set_address(addr_offset);
+    trans.set_data_length(len);
+    trans.set_streaming_width(len);
+    trans.set_byte_enable_ptr(nullptr);
+    trans.set_dmi_allowed(false);
+    trans.set_response_status(tlm::TLM_INCOMPLETE_RESPONSE);
+
+    trans.set_data_ptr(reinterpret_cast<unsigned char*>(dst));
+
+    tlm_socket->b_transport(trans, delay);
+
+    return trans.get_response_status();
 }

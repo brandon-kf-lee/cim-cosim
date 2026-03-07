@@ -181,6 +181,31 @@ static int dma_transfer_single_phys(cim_dev_t *d, uint64_t src_phys, uint32_t ds
     return wait_one_irq(d->dma_irq_fd, d->timeouts.dma_ms, "DMA", d->debug);
 }
 
+static int dma_read_single_phys(cim_dev_t *d, uint32_t src_sram, uint64_t dst_phys, uint32_t len)
+{
+    if (!d || !d->regs) return CIM_E_INVAL;
+    if (len == 0) return CIM_E_INVAL;
+
+    if (d->debug) {
+        fprintf(stderr, "cim: DMA READ src_sram=0x%08x dst_phys=0x%016" PRIx64 " len=%u\n",
+                src_sram, dst_phys, len);
+    }
+
+    /* Keep old meaning:
+     *  DMA_SRC = guest RAM (here: destination phys)
+     *  DMA_DST = device SRAM (here: source sram addr)
+     */
+    mmio_write32(d, DMA_SRC_LO, (uint32_t)(dst_phys & 0xffffffffu));
+    mmio_write32(d, DMA_SRC_HI, (uint32_t)(dst_phys >> 32));
+    mmio_write32(d, DMA_DST, src_sram);
+    mmio_write32(d, DMA_LEN, len);
+
+    /* Start DMA read (DEV->RAM) */
+    mmio_write32(d, DMA_CONTROL, DMA_START | DMA_DIR_READ);
+
+    return wait_one_irq(d->dma_irq_fd, d->timeouts.dma_ms, "DMA read", d->debug);
+}
+
 /* Paged DMA workaround:
  * Split transfer so that no DMA crosses a page boundary in the source buffer.
  */
@@ -229,6 +254,38 @@ static int dma_transfer_paged(cim_dev_t *d, const void *src, size_t len, uint32_
     return CIM_OK;
 }
 
+static int dma_read_paged(cim_dev_t *d, uint32_t src_sram, void *dst, size_t len)
+{
+    if (!d || !dst) return CIM_E_INVAL;
+
+    uintptr_t start = (uintptr_t)dst;
+    size_t off = 0;
+
+    while (off < len) {
+        uintptr_t v = start + off;
+
+        size_t in_page = d->page_sz - (v % d->page_sz);
+        size_t chunk = len - off;
+        if (chunk > in_page) chunk = in_page;
+        if (chunk > UINT32_MAX) return CIM_E_INVAL;
+
+        uint64_t phys = virt_to_phys((void *)v);
+        if (!phys) {
+            if (d->debug) {
+                fprintf(stderr, "cim: virt_to_phys failed (dst=%p off=%zu)\n", (void *)v, off);
+            }
+            return CIM_E_IO;
+        }
+
+        int rc = dma_read_single_phys(d, src_sram + (uint32_t)off, phys, (uint32_t)chunk);
+        if (rc != CIM_OK) return rc;
+
+        off += chunk;
+    }
+
+    return CIM_OK;
+}
+
 /* ---------- Public API ---------- */
 
 int cim_init(cim_dev_t **out_dev, const cim_config_t *cfg)
@@ -265,6 +322,7 @@ int cim_init(cim_dev_t **out_dev, const cim_config_t *cfg)
     d->timeouts = c.timeouts;
     d->debug = c.debug;
     
+    /* Declare system page size */
     long ps = sysconf(_SC_PAGESIZE);
     if (ps <= 0) {
         int rc = is_perm_error() ? CIM_E_PERM : CIM_E_IO;
@@ -328,6 +386,21 @@ void cim_close(cim_dev_t *d)
     if (d->devmem_fd >= 0) close(d->devmem_fd);
 
     free(d);
+}
+
+int cim_dma_read_sram(cim_dev_t *dev, uint32_t src_sram_addr, void *dst, size_t len)
+{
+    if (!dev || !dst) return CIM_E_INVAL;
+    if (len == 0) return CIM_OK;
+
+    if (dev->dma_mode == CIM_DMA_SINGLE_PHYS) {
+        uint64_t phys = virt_to_phys(dst);
+        if (!phys) return CIM_E_IO;
+        if (len > UINT32_MAX) return CIM_E_INVAL;
+        return dma_read_single_phys(dev, src_sram_addr, phys, (uint32_t)len);
+    }
+
+    return dma_read_paged(dev, src_sram_addr, dst, len);
 }
 
 int cim_dma_write_sram(cim_dev_t *dev, uint32_t dst_sram_addr,
@@ -395,4 +468,23 @@ int cim_read_sram_f32_irq(cim_dev_t *dev, uint32_t sram_addr, float *out_f32)
 
     memcpy(out_f32, &u, sizeof(*out_f32));
     return CIM_OK;
+}
+
+int cim_read_correction(cim_dev_t *dev, int64_t *out_i64) {
+        
+    if (!dev || !out_i64) return CIM_E_INVAL;
+
+    int64_t correction_lo = (int64_t)mmio_read32(dev, REG_EXCESS_TIME_LO);
+    int64_t correction_hi = (int64_t)mmio_read32(dev, REG_EXCESS_TIME_HI);
+    *out_i64 = (correction_hi << 32) | (correction_lo & 0xffffffffLL);
+    
+    return CIM_OK;
+}
+
+int cim_clear_correction(cim_dev_t *dev) {
+
+    if (!dev) return CIM_E_INVAL;
+    mmio_write32(dev, REG_TIMING_CLEAR, TIMING_CLEAR);
+    return CIM_OK;
+
 }

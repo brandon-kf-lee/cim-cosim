@@ -227,7 +227,26 @@ void Mem_Controller::dma_handler(tlm::tlm_generic_payload& trans, sc_core::sc_ti
         i_sram_socket->b_transport(write_trans, sram_delay);
         
         if (write_trans.get_response_status() != tlm::TLM_OK_RESPONSE) {
-            printf("DMA: ERROR - Bad TLM response from SRAM: %s\n", write_trans.get_response_string().c_str());
+            printf("DMA: ERROR - Bad TLM response from SRAM (write): %s\n", write_trans.get_response_string().c_str());
+            return;
+        }
+        
+        // Model realistic DMA timing (2ns per byte is typical for modern DMA)
+        wait(SC_ZERO_TIME);
+        //wait(sram_delay + sc_core::sc_time(DMA_BUFFER_SIZE * 2, sc_core::SC_NS));
+
+    // READ
+    } else if (cmd == tlm::TLM_READ_COMMAND) {
+        
+        sc_core::sc_time sram_delay = sc_core::SC_ZERO_TIME;
+
+        // Read chunk from destination address
+        tlm::tlm_generic_payload read_trans;
+        prepare_sram_transaction(read_trans, tlm::TLM_READ_COMMAND, addr, ptr, len);
+        i_sram_socket->b_transport(read_trans, sram_delay);
+        
+        if (read_trans.get_response_status() != tlm::TLM_OK_RESPONSE) {
+            printf("DMA: ERROR - Bad TLM response from SRAM (read): %s\n", read_trans.get_response_string().c_str());
             return;
         }
         

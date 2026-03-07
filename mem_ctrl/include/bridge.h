@@ -51,8 +51,9 @@ private:
 
     // Reading and writing the registers inside the memory controller
     tlm::tlm_response_status mmio_write(uint32_t addr_offset, uint32_t value);
-    tlm::tlm_response_status mmio_write_block(uint32_t addr_offset, uint8_t *value, uint32_t len);
     tlm::tlm_response_status mmio_read(uint32_t addr_offset, uint32_t& value);
+    tlm::tlm_response_status mmio_write_block(uint32_t addr_offset, uint8_t *value, uint32_t len);
+    tlm::tlm_response_status mmio_read_block(uint32_t addr_offset, uint8_t *dst, uint32_t len);
     void ctrl_wait();
 
     /* Variables to store delay time of each transaction */

@@ -87,6 +87,11 @@ void cim_close(cim_dev_t *dev);
 /* Helper: change timeouts after init. */
 int cim_set_timeouts(cim_dev_t *dev, const cim_timeouts_t *t);
 
+/* Use DMA to read from device RAM into a userspace buffer
+ * src_sram_addr is a byte address in the device SRAM map.
+ */
+int cim_dma_read_sram(cim_dev_t *dev, uint32_t src_sram_addr, void *dst, size_t len);
+
 /* Use DMA to transfer a userspace buffer into device SRAM.
  * dst_sram_addr is a byte address in the device SRAM map.
  */
@@ -110,8 +115,14 @@ int cim_read_sram_f32_irq(cim_dev_t *dev,
                           uint32_t sram_addr,
                           float *out_f32);
 
+/* Read the registers that stores the total excess time due to waiting for device & socket overhead. */
+int cim_read_correction(cim_dev_t *dev, 
+                        int64_t *out_i64);
+
+int cim_clear_correction(cim_dev_t *dev);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
 
-#endif /* CIM_H */
+#endif // CIM_H
