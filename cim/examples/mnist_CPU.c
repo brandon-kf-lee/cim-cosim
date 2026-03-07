@@ -1,164 +1,151 @@
-/* mnist_demo.c - MNIST inference using ONLY CPU calculations
+/*
+ * mnist_CPU.c - MNIST inference using ONLY CPU calculations
+ * with perf_event_open gating (instructions/cycles) around chosen regions.
  *
- * Workflow
- * - read mnist_network.bin and MNIST_0.bin from the guest filesystem
- * - compute forward propagation
- * - softmax
- * Author: Brandon Lee, brandon.kf.lee@gmail.com
- *     Derived from: Andrew Carter, https://github.com/AndrewCarterUK/mnist-neural-network-plain-c
+ * --measure total : counts (weights+bias DMA once) + (steady-state loop), excludes warmup
+ * --measure steady: counts steady-state loop only, excludes warmup
  */
 
+#define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200809L
 
-#define _POSIX_C_SOURCE 200809L  // For time.h
-
-#include "cim_mnist.h"
+#include "cim.h"
+#include "mnist.h"
+#include "mnist_bench.h"
+#include "perf_gate.h"
 
 #include <errno.h>
-#include <math.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
-// Convert a pixel value from 0-255 to one from 0 to 1
-#define PIXEL_SCALE(x) (((float) (x)) / 255.0f)
-
-/* Defaults (if no CLI args provided) */
-#define DEFAULT_PATH_NETWORK   "binaries/mnist_network.bin"
-#define DEFAULT_PATH_IMAGE_0   "binaries/MNIST_0.bin"
-
-/* Read exactly size bytes into dst from a .bin file. Returns 0 on success. */
-static int read_exact_file(const char *path, void *dst, size_t size)
-{
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        fprintf(stderr, "ERROR: failed to open '%s': %s\n", path, strerror(errno));
-        return -1;
-    }
-
-    size_t n = fread(dst, 1, size, f);
-    fclose(f);
-
-    if (n != size) {
-        fprintf(stderr, "ERROR: fread('%s') got %zu bytes, expected %zu\n", path, n, size);
-        return -1;
-    }
-
-    return 0;
-}
-
-static void usage(const char *argv0)
-{
-    fprintf(stderr,
-            "Usage:\n"
-            "  %s [mnist_network.bin] [mnist_image.bin]\n\n"
-            "Defaults:\n"
-            "  network: %s\n"
-            "  image:   %s\n",
-            argv0, DEFAULT_PATH_NETWORK, DEFAULT_PATH_IMAGE_0);
-}
-
-/* Numerically-stable softmax */
-static void neural_network_softmax(float *activations, int length)
-{
-    int i;
-    float sum, max;
-
-    for (i = 1, max = activations[0]; i < length; i++) {
-        if (activations[i] > max) {
-            max = activations[i];
-        }
-    }
-
-    for (i = 0, sum = 0; i < length; i++) {
-        activations[i] = expf(activations[i] - max);
-        sum += activations[i];
-    }
-
-    for (i = 0; i < length; i++) {
-        activations[i] /= sum;
-    }
-}
-
-/**
- * Use the weights and bias vector to forward propogate through the neural
- * network and calculate the activations.
+/* CPU forward pass (hypothesis) 
+   Images are pre-scaled
  */
-void neural_network_hypothesis(mnist_image_t *image, neural_network_t *network, float activations[MNIST_LABELS])
+static void neural_network_hypothesis(const float *image,
+                                      const neural_network_t *network,
+                                      float activations[MNIST_LABELS])
 {
-    int i, j;
-
-    for (i = 0; i < MNIST_LABELS; i++) {
-        activations[i] = network->b[i];
-
-        for (j = 0; j < MNIST_IMAGE_SIZE; j++) {
-            activations[i] += network->W[i][j] * PIXEL_SCALE(image->pixels[j]);
+    for (int i = 0; i < MNIST_LABELS; i++) {
+        float sum = network->b[i];
+        for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
+            /* CPU path scales pixels to [0,1] */
+            sum += network->W[i][j] * image[j];
         }
+        activations[i] = sum;
     }
 }
 
-int main(int argc, char* argv[])
+int main(int argc, char **argv)
 {
+    mnist_bench_opts_t opts;
+    int prc = mnist_bench_parse_args(&opts, argc, argv);
+    if (prc != 0) return prc;
 
-    /* Timing */
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-
-    /* Neural network */
+    /* ---- load network (outside measurement) ---- */
     neural_network_t network;
-    mnist_image_t image;
-    float activations[MNIST_LABELS] = {0};
-    float max_activation = activations[0];
-    int prediction = 0;
-
-    const char *path_network = DEFAULT_PATH_NETWORK;
-    const char *path_image   = DEFAULT_PATH_IMAGE_0;
-
-    if (argc > 3) {
-        usage(argv[0]);
-        return 2;
-    }
-    if (argc >= 2) path_network = argv[1];
-    if (argc >= 3) path_image   = argv[2];
-
-    printf("CIM MNIST Demo (CPU) \n\n");
-    printf("Network file: %s\n", path_network);
-    printf("Image file:   %s\n\n", path_image);
-
-    /* Load the pre-trained network */
-    if (read_exact_file(path_network, &network, sizeof(network)) != 0) {
+    if (read_exact_file(opts.path_network, &network, sizeof(network)) != 0)
         return 1;
+
+    /* ---- load image(s) (outside measurement) ---- */
+    mnist_image_t single_img;
+    mnist_dataset_t dataset;
+    memset(&dataset, 0, sizeof(dataset));
+
+    if (opts.mode == MODE_SINGLE) {
+        if (read_exact_file(opts.path_image, &single_img, sizeof(single_img)) != 0)
+            return 1;
+    } else {
+        if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0)
+            return 1;
     }
 
-    /* Load pre-processed MNIST image */
-    if (read_exact_file(path_image, &image, sizeof(image)) != 0) {
-        return 1;
+    /* ---- perf setup ---- */
+    perf_gate_t pg;
+    if (perf_gate_init(&pg) != 0) die_errno("perf_gate_init (check perf_event permissions)");
+
+    /* CPU has no “device load”, but keep semantics aligned:
+       - TOTAL measures warmup-excluded steady-state PLUS a "setup region".
+       - Mirror CIM benchmark’s behavior (two regions accumulated with warmup excluded).
+    */
+    if (opts.meas == MEAS_TOTAL) {
+        if (perf_gate_reset_enable(&pg) != 0) die_errno("perf_gate_reset_enable");
+        /* (nothing substantial to do here besides any one-time prep) */
+        if (perf_gate_disable(&pg) != 0) die_errno("perf_gate_disable");
     }
 
-    /* Run inference once (CPU only) */
-    neural_network_hypothesis(&image, &network, activations);
+    /* ---- warmup loop (never measured) ---- */
+    float input_f[MNIST_IMAGE_SIZE];
+    float activations[MNIST_LABELS];
 
-    /* Run softmax normalization */
-    neural_network_softmax(activations, MNIST_LABELS);
+    for (uint64_t it = 0; it < opts.warmup; it++) {
+        const mnist_image_t *img = &single_img;
+        if (opts.mode == MODE_T10K) img = &dataset.images[it % dataset.size];
 
-    /* Find largest activation */
-    for (int i = 0; i < MNIST_LABELS; ++i) {
-        printf("%d: %f\n", i, activations[i]);
-        if (activations[i] > max_activation) {
-            max_activation = activations[i];
-            prediction = i;
+        normalize_image_to_f32(img, input_f);
+        neural_network_hypothesis(input_f, &network, activations);
+    }
+
+    /* ---- measured steady-state region ---- */
+    /* Steady state only: reset counts and start */
+    if (opts.meas == MEAS_STEADY) {
+        if (perf_gate_reset_enable(&pg) != 0) die_errno("perf_gate_reset_enable");
+   
+    /* Total measurement: resume from warmup without reset */
+    } else if (opts.meas == MEAS_TOTAL) {
+        if (perf_gate_enable(&pg) != 0) die_errno("perf_gate_enable");
+    }
+
+    uint64_t correct = 0, total = 0;
+    for (uint64_t it = 0; it < opts.iters; it++) {
+        const mnist_image_t *img = &single_img;
+        int label = -1;
+
+        // New image if looping through dataset
+        if (opts.mode == MODE_T10K) {
+            uint32_t idx = (uint32_t)(it % dataset.size);
+            img = &dataset.images[idx];
+            label = dataset.labels[idx];
+        }
+
+        // Normalize image and compute 
+        normalize_image_to_f32(img, input_f);
+        neural_network_hypothesis(input_f, &network, activations);
+        
+		// Softmax + argmax
+        neural_network_softmax(activations, MNIST_LABELS);
+        int pred = argmax_f32(activations, MNIST_LABELS);
+
+        if (opts.verbose) {
+            if (opts.mode == MODE_T10K) printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
+            else                        printf("it=%" PRIu64 " pred=%d\n", it, pred);
+        }
+
+        if (opts.mode == MODE_T10K) {
+            total++;
+            if (pred == label) correct++;
         }
     }
 
-    printf("Predicted number: %d\n", prediction);
+    /* Stop all measurement */
+    if (perf_gate_disable(&pg) != 0) die_errno("perf_gate_disable");
 
-    /* Timing */
-    clock_gettime(CLOCK_MONOTONIC, &end);
+    /* ---- read counters and print once (outside measurement) ---- */
+    uint64_t instr = 0, cycles = 0;
+    if (perf_gate_read(&pg, &instr, &cycles) != 0) die_errno("perf_gate_read");
 
-    int64_t wall_ns = (end.tv_sec - start.tv_sec) * 1000000000LL
-                    + (end.tv_nsec - start.tv_nsec);
+    printf("perf: instructions=%" PRIu64 " cycles=%" PRIu64 "\n", instr, cycles);
+    printf("perf: instructions/iter=%.2f cycles/iter=%.2f\n",
+           (double)instr / (double)opts.iters, (double)cycles / (double)opts.iters);
 
-    printf("Wall time:     %ld ns\n", wall_ns);
+    if (opts.mode == MODE_T10K) {
+        printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
+               correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
+    }
 
+    perf_gate_close(&pg);
+    free_dataset(&dataset);
     return 0;
 }
