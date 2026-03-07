@@ -3,6 +3,7 @@
 #ifndef MEM_CONTROLLER_REGISTERS_H
 #define MEM_CONTROLLER_REGISTERS_H
 
+#include "mnist_network.h"
 #include <stdint.h>
 
 // Detect host architecture automatically, but allow manual override
@@ -49,11 +50,12 @@ static constexpr uint32_t SRAM_SIZE = 262144; // 256KB SRAM
 
 // SRAM Memory Layout (CIM Data Regions)
 // SRAM addresses are abstracted away for now, may not represent where the data (weights, input) should be stored in a real CIM system
-#define CIM_DATA_REGION  0x00001000  // Marker for the start of CIM data section
-#define WEIGHT_BASE_ADDR 0x00001000  // 0x00001000 - 0x00008FFF  31,360 bytes for uint32_t float weights (10×784)
-#define BIAS_BASE_ADDR   0x00009000  // 0x00009000 - 0x00009027  40 bytes for uint32_t float bias (10×1)  
-#define INPUT_BASE_ADDR  0x00009028  // 0x00009028 - 0x00009C67  784 bytes for uint8_t input (784×1)
-#define OUTPUT_BASE_ADDR 0x00009338  // 0x00009338 - 0x0000935F  40 bytes for uint32_t float output (10×1)
-#define SRAM_COMPUTE_CMD 0xFFFFFFFF  // 0xFFFFFFFF               Special address to signal compute execution
+// Addresses are defined as the start of the region packed right after the previous' size
+#define CIM_DATA_REGION  0x00001000   // Marker for the start of CIM data section
+#define WEIGHT_BASE_ADDR 0x00001000                                                   // Weights: 10 labels * 784 pixels per image * 4 bytes per float
+#define BIAS_BASE_ADDR   (WEIGHT_BASE_ADDR + (MNIST_LABELS * MNIST_IMAGE_SIZE * 4))   // Bias: 10 labels * 4 bytes per float
+#define INPUT_BASE_ADDR  (BIAS_BASE_ADDR   + (MNIST_LABELS * 4))                      // Inputs: 784 pixels per image * 4 bytes per float
+#define OUTPUT_BASE_ADDR (INPUT_BASE_ADDR  + (MNIST_IMAGE_SIZE * 4))                  
+#define SRAM_COMPUTE_CMD 0xFFFFFFFF   // Special address to signal compute execution
 
 #endif // MEM_CONTROLLER_REGISTERS_H
