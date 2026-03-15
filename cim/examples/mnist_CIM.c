@@ -142,13 +142,15 @@ int main(int argc, char **argv)
         int pred = argmax_f32(activations, MNIST_LABELS);
 
         if (opts.verbose) {
-            if (opts.mode == MODE_T10K) printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
-            else                        printf("it=%" PRIu64 " pred=%d\n", it, pred);
-        }
+            if (opts.mode == MODE_T10K) {
+                printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
 
-        if (opts.mode == MODE_T10K) {
-            total++;
-            if (pred == label) correct++;
+                // Increment total evaluated & correctness
+                total++;
+                if (pred == label) correct++;
+            } else { 
+                printf("it=%" PRIu64 " pred=%d\n", it, pred);
+            }
         }
     }
 
@@ -163,7 +165,7 @@ int main(int argc, char **argv)
     printf("perf: instructions/iter=%.2f cycles/iter=%.2f\n",
            (double)instr / (double)opts.iters, (double)cycles / (double)opts.iters);
 
-    if (opts.mode == MODE_T10K) {
+    if (opts.verbose && opts.mode == MODE_T10K) {
         printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
                correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
     }
