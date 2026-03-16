@@ -35,6 +35,6 @@ void die_errno(const char *msg);
 int  read_exact_file(const char *path, void *dst, size_t size);
 void neural_network_softmax(float *a, int n);
 int  argmax_f32(const float *a, int n);
-void normalize_image_to_f32(const mnist_image_t *img, float out_f[MNIST_IMAGE_SIZE]);
+uint8_t pixel_to_u4(uint8_t p);
 
 #endif // MNIST_BENCH_H

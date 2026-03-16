@@ -126,8 +126,7 @@ int argmax_f32(const float *a, int n)
     return idx;
 }
 
-void normalize_image_to_f32(const mnist_image_t *img, float out_f[MNIST_IMAGE_SIZE])
+uint8_t pixel_to_u4(uint8_t p)
 {
-    for (int j = 0; j < MNIST_IMAGE_SIZE; j++)
-        out_f[j] = ((float)img->pixels[j]) / 255.0f;
+    return (uint8_t)(p >> 4);   // 0..15
 }
