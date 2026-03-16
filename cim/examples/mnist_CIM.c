@@ -27,9 +27,9 @@ int main(int argc, char **argv)
     if (prc != 0) return prc;
 
     /* ---- load network (outside measurement) ---- */
-    neural_network_t network;
-    if (read_exact_file(opts.path_network, &network, sizeof(network)) != 0)
-        return 1;
+    neural_network_q4_t network_q4;
+    if (read_exact_file(opts.path_network, &network_q4, sizeof(network_q4)) != 0)
+        return 1;     
 
     /* ---- load image(s) (outside measurement) ---- */
     mnist_image_t single_img;
@@ -43,6 +43,18 @@ int main(int argc, char **argv)
         if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0)
             return 1;
     }
+
+printf("sizeof(q4)=%zu\n", sizeof(network_q4));
+printf("q4 x_scale=%f\n", network_q4.x_scale);
+printf("q4 w_scale[0..9]:");
+for (int i=0;i<10;i++) printf(" %f", network_q4.w_scale[i]);
+printf("\n");
+printf("q4 b[0..9]:");
+for (int i=0;i<10;i++) printf(" %d", network_q4.b[i]);
+printf("\n");
+printf("q4 W[0][0..15]:");
+for (int i=0;i<16;i++) printf(" %d", network_q4.W[0][i]);
+printf("\n");    
 
     /* ---- init CIM ---- */
     cim_dev_t *dev = NULL;
@@ -68,10 +80,10 @@ int main(int argc, char **argv)
         if (perf_gate_reset_enable(&pg) != 0) die_errno("perf_gate_reset_enable");
     }
 
-    rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network.W, sizeof(network.W));
+    rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network_q4.W, sizeof(network_q4.W));
     if (rc != CIM_OK) { fprintf(stderr, "DMA weights failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
 
-    rc = cim_dma_write_sram(dev, BIAS_BASE_ADDR, network.b, sizeof(network.b));
+    rc = cim_dma_write_sram(dev, BIAS_BASE_ADDR, network_q4.b, sizeof(network_q4.b));
     if (rc != CIM_OK) { fprintf(stderr, "DMA bias failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
 
     if (opts.meas == MEAS_TOTAL) {
@@ -79,27 +91,35 @@ int main(int argc, char **argv)
         if (perf_gate_disable(&pg) != 0) die_errno("perf_gate_disable");
     }
 
-    /* ---- warmup loop (never measured) ---- */
-    float input_f[MNIST_IMAGE_SIZE];
-    float activations[MNIST_LABELS];
+    /* ---- Input & Output Variables ---- */
+    uint8_t input_q[MNIST_IMAGE_SIZE];   // Quantized MNIST input image
+    int32_t logits[MNIST_LABELS];        // Raw, unnormalized output values 
+    float   activations[MNIST_LABELS];   // Activations after normalization
 
+    /* ---- warmup loop (never measured) ---- */
     for (uint64_t it = 0; it < opts.warmup; it++) {
         const mnist_image_t *img = &single_img;
         if (opts.mode == MODE_T10K) img = &dataset.images[it % dataset.size];
 
-        normalize_image_to_f32(img, input_f);
+        // Quantize MNIST image to 4 bits per pixel
+        for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
+            input_q[j] = pixel_to_u4(img->pixels[j]);
+        }
 
-        rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, input_f, sizeof(input_f));
+        rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, input_q, sizeof(input_q));
         if (rc != CIM_OK) goto out;
 
         rc = cim_compute(dev);
         if (rc != CIM_OK) goto out;
 
-        for (int i = 0; i < MNIST_LABELS; i++) {
-            uint32_t addr = OUTPUT_BASE_ADDR + (uint32_t)(i * sizeof(float));
-            rc = cim_read_sram_f32_irq(dev, addr, &activations[i]);
-            if (rc != CIM_OK) goto out;
+        // Read logits output & convert to float activations
+        rc = cim_dma_read_sram(dev, OUTPUT_BASE_ADDR, logits, sizeof(logits));
+        if (rc != CIM_OK) goto out;
+
+        for (int i = 0; i < MNIST_LABELS; i++){
+            activations[i] = (float)logits[i];
         }
+            
     }
 
     /* ---- measured steady-state region ---- */
@@ -124,22 +144,39 @@ int main(int argc, char **argv)
             label = dataset.labels[idx];
         }
 
-        // Normalize image and DMA to SRAM
-        normalize_image_to_f32(img, input_f);
-        rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, input_f, sizeof(input_f));
+        // Quantize MNIST image to 4 bits per pixel
+        for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
+            input_q[j] = pixel_to_u4(img->pixels[j]);
+        }
+
+        // DMA to SRAM
+        rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, input_q, sizeof(input_q));
         if (rc != CIM_OK) goto out;
 
         // Start compute
         rc = cim_compute(dev);
         if (rc != CIM_OK) goto out;
 
-        // Read output
-        rc = cim_dma_read_sram(dev, OUTPUT_BASE_ADDR, activations, sizeof(activations));
+        // Read logits output & convert to float activations
+        rc = cim_dma_read_sram(dev, OUTPUT_BASE_ADDR, logits, sizeof(logits));
         if (rc != CIM_OK) goto out;
 
+        for (int i = 0; i < MNIST_LABELS; i++){
+            activations[i] = (float)logits[i];
+        }
+            
+        // TODO: softmax is optional, can run argmax on the logits themselves
+        //       Removes need for: float activations[] and neural_network_softmax
         // Softmax + argmax
-        neural_network_softmax(activations, MNIST_LABELS);
-        int pred = argmax_f32(activations, MNIST_LABELS);
+        // neural_network_softmax(activations, MNIST_LABELS);
+        // int pred = argmax_f32(activations, MNIST_LABELS);
+
+        float scores[MNIST_LABELS];
+        for (int i=0;i<MNIST_LABELS;i++) {
+            scores[i] = (float)logits[i] * (network_q4.x_scale * network_q4.w_scale[i]);
+        }
+        int pred = argmax_f32(scores, MNIST_LABELS);
+
 
         if (opts.verbose) {
             if (opts.mode == MODE_T10K) {
