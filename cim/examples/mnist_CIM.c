@@ -1,5 +1,5 @@
 /*
- * mnist_CIM.c - MNIST inference using CIM userspace library
+ * mnist_CIM.c - MNIST inference using CIM userspace library (INT4/INT4 path)
  * with perf_event_open gating (instructions/cycles) around chosen regions.
  *
  * --measure total : counts (weights+bias DMA once) + (steady-state loop), excludes warmup
@@ -42,19 +42,7 @@ int main(int argc, char **argv)
     } else {
         if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0)
             return 1;
-    }
-
-printf("sizeof(q4)=%zu\n", sizeof(network_q4));
-printf("q4 x_scale=%f\n", network_q4.x_scale);
-printf("q4 w_scale[0..9]:");
-for (int i=0;i<10;i++) printf(" %f", network_q4.w_scale[i]);
-printf("\n");
-printf("q4 b[0..9]:");
-for (int i=0;i<10;i++) printf(" %d", network_q4.b[i]);
-printf("\n");
-printf("q4 W[0][0..15]:");
-for (int i=0;i<16;i++) printf(" %d", network_q4.W[0][i]);
-printf("\n");    
+    }  
 
     /* ---- init CIM ---- */
     cim_dev_t *dev = NULL;
@@ -94,7 +82,6 @@ printf("\n");
     /* ---- Input & Output Variables ---- */
     uint8_t input_q[MNIST_IMAGE_SIZE];   // Quantized MNIST input image
     int32_t logits[MNIST_LABELS];        // Raw, unnormalized output values 
-    float   activations[MNIST_LABELS];   // Activations after normalization
 
     /* ---- warmup loop (never measured) ---- */
     for (uint64_t it = 0; it < opts.warmup; it++) {
@@ -102,9 +89,8 @@ printf("\n");
         if (opts.mode == MODE_T10K) img = &dataset.images[it % dataset.size];
 
         // Quantize MNIST image to 4 bits per pixel
-        for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
-            input_q[j] = pixel_to_u4(img->pixels[j]);
-        }
+        quantize_image_to_u4(img, input_q);
+
 
         rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, input_q, sizeof(input_q));
         if (rc != CIM_OK) goto out;
@@ -112,14 +98,7 @@ printf("\n");
         rc = cim_compute(dev);
         if (rc != CIM_OK) goto out;
 
-        // Read logits output & convert to float activations
-        rc = cim_dma_read_sram(dev, OUTPUT_BASE_ADDR, logits, sizeof(logits));
-        if (rc != CIM_OK) goto out;
-
-        for (int i = 0; i < MNIST_LABELS; i++){
-            activations[i] = (float)logits[i];
-        }
-            
+        /* no softmax needed for warmup */
     }
 
     /* ---- measured steady-state region ---- */
@@ -145,9 +124,7 @@ printf("\n");
         }
 
         // Quantize MNIST image to 4 bits per pixel
-        for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
-            input_q[j] = pixel_to_u4(img->pixels[j]);
-        }
+        quantize_image_to_u4(img, input_q);
 
         // DMA to SRAM
         rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, input_q, sizeof(input_q));
@@ -157,26 +134,17 @@ printf("\n");
         rc = cim_compute(dev);
         if (rc != CIM_OK) goto out;
 
-        // Read logits output & convert to float activations
+        // Read logits output
         rc = cim_dma_read_sram(dev, OUTPUT_BASE_ADDR, logits, sizeof(logits));
         if (rc != CIM_OK) goto out;
 
-        for (int i = 0; i < MNIST_LABELS; i++){
-            activations[i] = (float)logits[i];
-        }
-            
-        // TODO: softmax is optional, can run argmax on the logits themselves
-        //       Removes need for: float activations[] and neural_network_softmax
-        // Softmax + argmax
-        // neural_network_softmax(activations, MNIST_LABELS);
-        // int pred = argmax_f32(activations, MNIST_LABELS);
-
+        /* Per-class dequantization for comparable scores (required with per-class w_scale) */
         float scores[MNIST_LABELS];
-        for (int i=0;i<MNIST_LABELS;i++) {
+        for (int i = 0; i < MNIST_LABELS; i++) {
             scores[i] = (float)logits[i] * (network_q4.x_scale * network_q4.w_scale[i]);
         }
-        int pred = argmax_f32(scores, MNIST_LABELS);
 
+        int pred = argmax_f32(scores, MNIST_LABELS);
 
         if (opts.verbose) {
             if (opts.mode == MODE_T10K) {
