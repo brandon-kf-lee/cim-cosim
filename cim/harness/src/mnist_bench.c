@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static int streq(const char *a, const char *b) { return strcmp(a, b) == 0; }
 
@@ -136,4 +137,11 @@ void quantize_image_to_u4(const mnist_image_t *img, uint8_t out_q[MNIST_IMAGE_SI
     for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
         out_q[j] = pixel_to_u4(img->pixels[j]); // must return 0..15
     }
+}
+
+uint64_t now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
