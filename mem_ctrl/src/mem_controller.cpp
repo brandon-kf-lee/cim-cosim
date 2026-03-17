@@ -9,20 +9,17 @@ using namespace tlm;
  * Memory Controller constructor
  *
  * Creates the TLM target socket for CPU communication, initiator socket for SRAM access,
- * allocates DMA buffer, and spawns three persistent SystemC threads for operation.
+ * and allocates DMA buffer
  *
  * @param name SystemC module name for this instance
  *
- * Note:
- *   - Spawns 3 SystemC threads: dma_engine, dma_irq_manager, irq_manager
  */
 Mem_Controller::Mem_Controller(sc_module_name name): 
     sc_module(name), 
     t_cpu_socket("t_cpu_socket"), 
     i_sram_socket("i_sram_socket"), 
     irq("irq")
-    {
-    
+{
     t_cpu_socket.register_b_transport(this, &Mem_Controller::b_transport);
 
     // Initialize interrupt
@@ -154,6 +151,8 @@ void Mem_Controller::ctrl_handler(tlm::tlm_generic_payload& trans, sc_core::sc_t
         return;
     }
 
+    // Model register access latency
+    delay += timing::CTRL_REG;
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
 }
 
@@ -204,61 +203,52 @@ void Mem_Controller::dma_handler(tlm::tlm_generic_payload& trans, sc_core::sc_ti
 
     // Validate SRAM address bounds
     if (addr + len > SRAM_SIZE) {
-        printf("   DMA: ERROR - SRAM overflow error.");
+        fprintf(stderr, "   DMA: ERROR - SRAM overflow error.");
         trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
         return;
     }
 
     // Validate transfer parameters
     if (len == 0) {
-        printf("   DMA: ERROR - len (%d) is 0\n", len);
+        fprintf(stderr, "   DMA: ERROR - len (%d) is 0\n", len);
         trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
         return;
     }
 
-    // WRITE
+    // Write chunk to destination address
     if (cmd == tlm::TLM_WRITE_COMMAND) {
-        
         sc_core::sc_time sram_delay = sc_core::SC_ZERO_TIME;
 
-        // Write chunk to destination address
         tlm::tlm_generic_payload write_trans;
         prepare_sram_transaction(write_trans, tlm::TLM_WRITE_COMMAND, addr, ptr, len);
-        i_sram_socket->b_transport(write_trans, sram_delay);
+        i_sram_socket->b_transport(write_trans, sram_delay); // Don't add SRAM delay to DMA transfer
         
         if (write_trans.get_response_status() != tlm::TLM_OK_RESPONSE) {
             printf("DMA: ERROR - Bad TLM response from SRAM (write): %s\n", write_trans.get_response_string().c_str());
             return;
         }
-        
-        // Model realistic DMA timing (2ns per byte is typical for modern DMA)
-        wait(SC_ZERO_TIME);
-        //wait(sram_delay + sc_core::sc_time(DMA_BUFFER_SIZE * 2, sc_core::SC_NS));
 
-    // READ
+    // Read chunk from destination address
     } else if (cmd == tlm::TLM_READ_COMMAND) {
-        
         sc_core::sc_time sram_delay = sc_core::SC_ZERO_TIME;
 
-        // Read chunk from destination address
         tlm::tlm_generic_payload read_trans;
         prepare_sram_transaction(read_trans, tlm::TLM_READ_COMMAND, addr, ptr, len);
-        i_sram_socket->b_transport(read_trans, sram_delay);
+        i_sram_socket->b_transport(read_trans, sram_delay); // Don't add SRAM delay to DMA transfer
         
         if (read_trans.get_response_status() != tlm::TLM_OK_RESPONSE) {
             printf("DMA: ERROR - Bad TLM response from SRAM (read): %s\n", read_trans.get_response_string().c_str());
             return;
         }
-        
-        // Model realistic DMA timing (2ns per byte is typical for modern DMA)
-        wait(SC_ZERO_TIME);
-        //wait(sram_delay + sc_core::sc_time(DMA_BUFFER_SIZE * 2, sc_core::SC_NS));
 
     // ERROR
     } else {
         trans.set_response_status(tlm::TLM_COMMAND_ERROR_RESPONSE);
         return;
     }
+
+    // Model DMA access latency
+    delay += timing::dma_transfer_time(len);
     trans.set_response_status(tlm::TLM_OK_RESPONSE);
 }
 
@@ -388,14 +378,5 @@ void Mem_Controller::irq_manager() {
         bool enable = (reg_control & CTRL_IRQEN) != 0; // Are IRQs enabled?
         bool done   = (reg_status & STAT_DONE) != 0;   // Is the operation done?
         irq.write(enable && done);                     // Raise IRQ if both is true
-
-        // bool enable = (reg_control & CTRL_IRQEN) != 0; // Are IRQs enabled?
-        // bool done   = (reg_status & STAT_DONE) != 0;   // Is the operation done?
-        // bool new_irq_state = enable && done;
-        
-        // printf("CTRL IRQ: enable=%d, done=%d, status=0x%08X -> IRQ=%d\n", 
-        //        enable, done, reg_status, new_irq_state);
-
-        // irq.write(new_irq_state);                     // Raise IRQ if both is true
     }
 }
