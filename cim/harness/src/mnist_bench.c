@@ -130,3 +130,10 @@ uint8_t pixel_to_u4(uint8_t p)
 {
     return (uint8_t)(p >> 4);   // 0..15
 }
+
+void quantize_image_to_u4(const mnist_image_t *img, uint8_t out_q[MNIST_IMAGE_SIZE])
+{
+    for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
+        out_q[j] = pixel_to_u4(img->pixels[j]); // must return 0..15
+    }
+}

@@ -36,5 +36,6 @@ int  read_exact_file(const char *path, void *dst, size_t size);
 void neural_network_softmax(float *a, int n);
 int  argmax_f32(const float *a, int n);
 uint8_t pixel_to_u4(uint8_t p);
+void quantize_image_to_u4(const mnist_image_t *img, uint8_t out_q[MNIST_IMAGE_SIZE]);
 
 #endif // MNIST_BENCH_H
