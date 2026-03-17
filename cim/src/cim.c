@@ -104,52 +104,25 @@ static int wait_one_irq(int fd, int timeout_ms, const char *what, int debug)
 /* Get physical address of a virtual address (ONE PAGE ONLY).
  * This is a best-effort helper for the paged DMA workaround.
  */
-static uint64_t virt_to_phys(void *vaddr)
+static uint64_t virt_to_phys(cim_dev_t *d, void *vaddr)
 {
-    int fd;
-    uint64_t page, phys;
-    size_t pagesz;
-    off_t offset;
-    
-    fd = open("/proc/self/pagemap", O_RDONLY);
-    if (fd < 0) {
-        perror("open pagemap");
+    uint64_t page = 0;
+    size_t pagesz = d->page_sz;
+
+    off_t offset = (off_t)(((uintptr_t)vaddr / pagesz) * sizeof(uint64_t));
+
+    if (pread(d->pagemap_fd, &page, sizeof(page), offset) != (ssize_t)sizeof(page)) {
+        if (d->debug) perror("pread pagemap");
         return 0;
     }
-
-    page = 0;
-
-    long ps = sysconf(_SC_PAGESIZE);
-    if (ps <= 0) {
-        perror("sysconf(_SC_PAGESIZE) invalid");
-        close(fd);
-        return 0; 
-    }
-    pagesz = (size_t)ps;
-
-    offset = (off_t)(((uintptr_t)vaddr / pagesz) * sizeof(uint64_t));
-
-    if (lseek(fd, offset, SEEK_SET) == (off_t)-1) {
-    	perror("lseek pagemap");
-        close(fd);
-        return 0;
-    }
-
-    if (read(fd, &page, sizeof(page)) != (ssize_t)sizeof(page)) {
-        perror("read pagemap");
-        close(fd);
-        return 0;
-    }
-
-    close(fd);
 
     if (!(page & (1ULL << 63))) {
-        fprintf(stderr, "Page not present in memory\n");
+        if (d->debug) fprintf(stderr, "Page not present in memory\n");
         return 0;
     }
 
 	/* Physical page frame number is in bits 0-54 */
-    phys = (page & ((1ULL << 55) - 1)) * pagesz;
+    uint64_t phys = (page & ((1ULL << 55) - 1)) * pagesz;
     phys += (uintptr_t)vaddr % pagesz;
     return phys;
 }
@@ -237,7 +210,7 @@ static int dma_transfer_paged(cim_dev_t *d, const void *src, size_t len, uint32_
         if (chunk > in_page) chunk = in_page;
         if (chunk > UINT32_MAX) return CIM_E_INVAL;
 
-        uint64_t phys = virt_to_phys((void *)v);
+        uint64_t phys = virt_to_phys(d, (void *)v);
         if (!phys) {
             if (d->debug) {
                 fprintf(stderr, "cim: virt_to_phys failed (v=%p off=%zu)\n", (void *)v, off);
@@ -269,7 +242,7 @@ static int dma_read_paged(cim_dev_t *d, uint32_t src_sram, void *dst, size_t len
         if (chunk > in_page) chunk = in_page;
         if (chunk > UINT32_MAX) return CIM_E_INVAL;
 
-        uint64_t phys = virt_to_phys((void *)v);
+        uint64_t phys = virt_to_phys(d, (void *)v);
         if (!phys) {
             if (d->debug) {
                 fprintf(stderr, "cim: virt_to_phys failed (dst=%p off=%zu)\n", (void *)v, off);
@@ -285,6 +258,32 @@ static int dma_read_paged(cim_dev_t *d, uint32_t src_sram, void *dst, size_t len
 
     return CIM_OK;
 }
+
+/* Force single chunk transfer by using page-aligned buffers */
+static int dma_transfer_single_page(cim_dev_t *d, const void *src, size_t len, uint32_t dst_sram)
+{
+    uintptr_t start = (uintptr_t)src;
+    size_t off_in_page = start % d->page_sz;
+    if (off_in_page + len <= d->page_sz && len <= UINT32_MAX) {
+        uint64_t phys = virt_to_phys(d, (void *)start);
+        if (!phys) return CIM_E_IO;
+        return dma_transfer_single_phys(d, phys, dst_sram, (uint32_t)len);
+    }
+    return dma_transfer_paged(d, src, len, dst_sram);
+}
+
+static int dma_read_single_page(cim_dev_t *d, uint32_t src_sram, void *dst, size_t len)
+{
+    uintptr_t start = (uintptr_t)dst;
+    size_t off_in_page = start % d->page_sz;
+    if (off_in_page + len <= d->page_sz && len <= UINT32_MAX) {
+        uint64_t phys = virt_to_phys(d, (void *)start);
+        if (!phys) return CIM_E_IO;
+        return dma_read_single_phys(d, src_sram, phys, (uint32_t)len);
+    }
+    return dma_read_paged(d, src_sram, dst, len);
+}
+
 
 /* ---------- Public API ---------- */
 
@@ -310,6 +309,7 @@ int cim_init(cim_dev_t **out_dev, const cim_config_t *cfg)
     cim_dev_t *d = calloc(1, sizeof(*d));
     if (!d) return CIM_E_NOMEM;
 
+    d->pagemap_fd = -1;
     d->devmem_fd = -1;
     d->dma_irq_fd = -1;
     d->ctrl_irq_fd = -1;
@@ -350,6 +350,13 @@ int cim_init(cim_dev_t **out_dev, const cim_config_t *cfg)
 
     d->regs = (volatile uint32_t *)d->mmio_map;
 
+    /* Open pagemap */
+    d->pagemap_fd = open("/proc/self/pagemap", O_RDONLY);
+    if (d->pagemap_fd < 0) {
+        cim_close(d);
+        return CIM_E_IO;
+    }
+
     /* Open kernel IRQ miscdevices */
     d->dma_irq_fd = open(c.dma_irq_path, O_RDONLY);
     if (d->dma_irq_fd < 0) {
@@ -385,6 +392,8 @@ void cim_close(cim_dev_t *d)
     if (d->mmio_map != MAP_FAILED) munmap(d->mmio_map, d->mmio_size);
     if (d->devmem_fd >= 0) close(d->devmem_fd);
 
+    if (d->pagemap_fd >= 0) close(d->pagemap_fd);
+
     free(d);
 }
 
@@ -394,13 +403,13 @@ int cim_dma_read_sram(cim_dev_t *dev, uint32_t src_sram_addr, void *dst, size_t 
     if (len == 0) return CIM_OK;
 
     if (dev->dma_mode == CIM_DMA_SINGLE_PHYS) {
-        uint64_t phys = virt_to_phys(dst);
+        uint64_t phys = virt_to_phys(dev, dst);
         if (!phys) return CIM_E_IO;
         if (len > UINT32_MAX) return CIM_E_INVAL;
         return dma_read_single_phys(dev, src_sram_addr, phys, (uint32_t)len);
     }
 
-    return dma_read_paged(dev, src_sram_addr, dst, len);
+    return dma_read_single_page(dev, src_sram_addr, dst, len);
 }
 
 int cim_dma_write_sram(cim_dev_t *dev, uint32_t dst_sram_addr,
@@ -415,14 +424,13 @@ int cim_dma_write_sram(cim_dev_t *dev, uint32_t dst_sram_addr,
      * - CIM_DMA_SINGLE_PHYS is only safe when the DMA range is physically contiguous.
      */
     if (dev->dma_mode == CIM_DMA_SINGLE_PHYS) {
-        uint64_t phys = virt_to_phys((void *)src);
+        uint64_t phys = virt_to_phys(dev, (void *)src);
         if (!phys) return CIM_E_IO;
         if (len > UINT32_MAX) return CIM_E_INVAL;
         return dma_transfer_single_phys(dev, phys, dst_sram_addr, (uint32_t)len);
     }
 
-    return dma_transfer_paged(dev, src, len, dst_sram_addr);
-}
+    return dma_transfer_single_page(dev, src, len, dst_sram_addr);}
 
 int cim_compute(cim_dev_t *dev)
 {

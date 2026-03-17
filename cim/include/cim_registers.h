@@ -58,6 +58,7 @@ struct cim_dev {
     cim_dma_mode_t dma_mode;
     cim_timeouts_t timeouts;
 
+    int pagemap_fd;
     size_t mmio_size;
     uintptr_t mmio_base;
     size_t page_sz;
