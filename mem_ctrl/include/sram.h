@@ -10,6 +10,7 @@
 
 #include "include/mem_controller_registers.h"
 #include "include/mnist_network.h"
+#include "include/timing_params.h"
 
 SC_MODULE(Sram)
 {
@@ -28,24 +29,7 @@ public:
 
 private:
     uint8_t* mem;
-
-    // Base latency for ordinary SRAM reads/writes (your existing simple model).
-    sc_core::sc_time mem_latency;
-
-    // ---- CIM timing knobs (derived from You et al. 2024) ----
-    // Model the macro as a 64-wide tile engine, matching the 64x64 CIM array dimension
-    static constexpr int TILE_W = 64;
-
-    // For multi-bit MAC, a set of MAC ops is completed every M clock cycles on average, 
-    // where M is the input bitwidth.
-    // For 4b inputs => ~4 cycles per tile.
-    static constexpr int INPUT_BITS = 4;
-    static constexpr int CYCLES_PER_TILE = INPUT_BITS;
-
-    // Modeled on 4b/4b MAC operation at 100 MHz
-    // 100 MHz => 10 ns per cycle.
-    static constexpr uint32_t CYCLE_NS = 10;
-
+    
     void compute_in_memory(sc_core::sc_time &delay);
 };
 
