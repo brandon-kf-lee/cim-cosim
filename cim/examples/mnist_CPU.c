@@ -1,15 +1,19 @@
 /*
- * mnist_CPU.c - MNIST inference using ONLY CPU calculations
+ * mnist_CPU.c - MNIST inference using ONLY CPU calculations (INT4/INT4 path)
+ * Matches CIM numeric pipeline for apples-to-apples comparisons:
+ *   - activations: u4 in [0..15] via pixel_to_u4()
+ *   - weights: s4 stored in int8 [-8..7]
+ *   - bias: int32 in accumulator domain
+ *   - per-class dequantization for argmax: score[i] = acc[i] * (x_scale * w_scale[i])
+ *
  * with perf_event_open gating (instructions/cycles) around chosen regions.
  *
- * --measure total : counts (weights+bias DMA once) + (steady-state loop), excludes warmup
+ * --measure total : counts setup + steady-state loop, excludes warmup
  * --measure steady: counts steady-state loop only, excludes warmup
  */
 
-#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
-#include "cim.h"
 #include "mnist.h"
 #include "mnist_bench.h"
 #include "perf_gate.h"
@@ -21,20 +25,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* CPU forward pass (hypothesis) 
-   Images are pre-scaled
- */
-static void neural_network_hypothesis(const float *image,
-                                      const neural_network_t *network,
-                                      float activations[MNIST_LABELS])
+/* INT4 CPU forward pass: acc_i = b_i + sum_j (W_ij * x_j) */
+static void neural_network_hypothesis_q4(const uint8_t x_q[MNIST_IMAGE_SIZE],
+                                         const neural_network_q4_t *net,
+                                         int32_t acc[MNIST_LABELS])
 {
     for (int i = 0; i < MNIST_LABELS; i++) {
-        float sum = network->b[i];
+        int32_t sum = net->b[i];
         for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
-            /* CPU path scales pixels to [0,1] */
-            sum += network->W[i][j] * image[j];
+            sum += (int32_t)net->W[i][j] * (int32_t)x_q[j]; // s4 * u4 -> int32 accumulate
         }
-        activations[i] = sum;
+        acc[i] = sum;
     }
 }
 
@@ -44,9 +45,9 @@ int main(int argc, char **argv)
     int prc = mnist_bench_parse_args(&opts, argc, argv);
     if (prc != 0) return prc;
 
-    /* ---- load network (outside measurement) ---- */
-    neural_network_t network;
-    if (read_exact_file(opts.path_network, &network, sizeof(network)) != 0)
+    /* ---- load quantized network (outside measurement) ---- */
+    neural_network_q4_t network_q4;
+    if (read_exact_file(opts.path_network, &network_q4, sizeof(network_q4)) != 0)
         return 1;
 
     /* ---- load image(s) (outside measurement) ---- */
@@ -76,16 +77,19 @@ int main(int argc, char **argv)
         if (perf_gate_disable(&pg) != 0) die_errno("perf_gate_disable");
     }
 
-    /* ---- warmup loop (never measured) ---- */
-    float input_f[MNIST_IMAGE_SIZE];
-    float activations[MNIST_LABELS];
+    /* ---- Input & Output Variables ---- */
+    uint8_t input_q[MNIST_IMAGE_SIZE];   // Quantized MNIST input image    
+    int32_t acc[MNIST_LABELS];           // Activations
 
+    /* ---- warmup loop (never measured) ---- */
     for (uint64_t it = 0; it < opts.warmup; it++) {
         const mnist_image_t *img = &single_img;
         if (opts.mode == MODE_T10K) img = &dataset.images[it % dataset.size];
 
-        normalize_image_to_f32(img, input_f);
-        neural_network_hypothesis(input_f, &network, activations);
+        // Quantize MNIST image to 4 bits per pixel
+        quantize_image_to_u4(img, input_q);
+        neural_network_hypothesis_q4(input_q, &network_q4, acc);
+        /* no softmax needed for warmup */
     }
 
     /* ---- measured steady-state region ---- */
@@ -110,19 +114,22 @@ int main(int argc, char **argv)
             label = dataset.labels[idx];
         }
 
-        // Normalize image and compute 
-        normalize_image_to_f32(img, input_f);
-        neural_network_hypothesis(input_f, &network, activations);
-        
-		// Softmax + argmax
-        neural_network_softmax(activations, MNIST_LABELS);
-        int pred = argmax_f32(activations, MNIST_LABELS);
+        quantize_image_to_u4(img, input_q);
+        neural_network_hypothesis_q4(input_q, &network_q4, acc);
+
+        /* Per-class dequantization for comparable scores (required with per-class w_scale) */
+        float scores[MNIST_LABELS];
+        for (int i = 0; i < MNIST_LABELS; i++) {
+            scores[i] = (float)acc[i] * (network_q4.x_scale * network_q4.w_scale[i]);
+        }
+
+        int pred = argmax_f32(scores, MNIST_LABELS);
 
         if (opts.verbose) {
             if (opts.mode == MODE_T10K) {
                 printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
 
-                // Increment total & correctness
+                // Increment total evaluated & correctness
                 total++;
                 if (pred == label) correct++;
             } else { 
