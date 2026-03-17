@@ -169,7 +169,7 @@ static int dma_transfer_single_phys(cim_dev_t *d, uint64_t src_phys, uint32_t ds
     mmio_write32(d, DMA_SRC_LO, (uint32_t)(src_phys & 0xffffffffu));
     mmio_write32(d, DMA_SRC_HI, (uint32_t)(src_phys >> 32));
 
-    /* Set destination address (32-bit address in SRAM ) */
+    /* Set destination address (32-bit address in SRAM) */
     mmio_write32(d, DMA_DST, dst_sram);
 
     /* Set transfer length */
