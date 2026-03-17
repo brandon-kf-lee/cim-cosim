@@ -51,7 +51,6 @@ void Bridge::run() {
             continue;  // go wait for next message
         }
         
-        // Received: is_write: %d, is_dma: %d, addr: 0x%lx, size: %d \n", msg.is_write, msg.is_dma, msg.addr, msg.size);
         /* Mark time before controller does work */
         t_start = sc_core::sc_time_stamp();
 
@@ -102,6 +101,12 @@ void Bridge::run() {
         /* Unknown command */
         } else {
             fprintf(stderr, "[ERROR] Unknown command.\n");
+        }
+
+        /* Accumulate delays from all SystemC modules */
+        if (delay != SC_ZERO_TIME) {
+            wait(delay);
+            delay = SC_ZERO_TIME;
         }
 
         // TEST DELAY
