@@ -1,14 +1,12 @@
 /*
- * mnist_CPU_FP32.c - MNIST inference using ONLY CPU calculations
+ * mnist_accurate.c - MNIST inference using ONLY CPU calculations
  * This version of mnist_CPU does not use quantized weights or inputs. 
  * It is mainly used just to provide an accuracy baseline, with full precision
  * inference (32-bit) vs quantized (4-bit)
  */
 
-#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
-#include "cim.h"
 #include "mnist.h"
 #include "mnist_bench.h"
 
@@ -84,15 +82,13 @@ int main(int argc, char **argv)
         normalize_image_to_f32(img, input_f);
         neural_network_hypothesis(input_f, &network, activations);
         
-		// Softmax + argmax
-        neural_network_softmax(activations, MNIST_LABELS);
         int pred = argmax_f32(activations, MNIST_LABELS);
 
         if (opts.verbose) {
             if (opts.mode == MODE_T10K) {
                 printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
 
-                // Increment total & correctness
+                // Increment total evaluated & correctness
                 total++;
                 if (pred == label) correct++;
             } else { 
@@ -100,6 +96,12 @@ int main(int argc, char **argv)
             }
         }
     }
+
+    if (opts.verbose && opts.mode == MODE_T10K) {
+        printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
+               correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
+    }
+
     free_dataset(&dataset);
     return 0;
 }
