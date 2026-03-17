@@ -1,5 +1,5 @@
 /*
- * mnist_CPU.c - MNIST inference using ONLY CPU calculations (INT4/INT4 path)
+ * mnist_CPU_inst.c - MNIST inference using ONLY CPU calculations (INT4/INT4 path)
  * Matches CIM numeric pipeline for apples-to-apples comparisons:
  *   - activations: u4 in [0..15] via pixel_to_u4()
  *   - weights: s4 stored in int8 [-8..7]

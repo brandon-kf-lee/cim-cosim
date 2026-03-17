@@ -1,5 +1,5 @@
 /*
- * mnist_CIM.c - MNIST inference using CIM userspace library (INT4/INT4 path)
+ * mnist_CIM_inst.c - MNIST inference using CIM userspace library (INT4/INT4 path)
  * with perf_event_open gating (instructions/cycles) around chosen regions.
  *
  * --measure total : counts (weights+bias DMA once) + (steady-state loop), excludes warmup
