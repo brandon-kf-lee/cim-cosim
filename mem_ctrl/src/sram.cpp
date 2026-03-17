@@ -18,10 +18,16 @@ static inline uint8_t clamp_u4(int v)
     return (uint8_t)v;
 }
 
+// Clamp to signed 4-bit range [-8, 7].
+static inline int8_t clamp_s4(int v) {
+    if (v < -8) return -8;
+    if (v >  7) return  7;
+    return (int8_t)v;
+}
+
 Sram::Sram(sc_module_name name):
     sc_module(name),
-    socket("socket"),
-    mem_latency(10, SC_NS)   // Base memory access latency (TODO: find real number)
+    socket("socket")
 {
     mem = new uint8_t[SRAM_SIZE]();
     socket.register_b_transport(this, &Sram::b_transport);
@@ -84,9 +90,8 @@ void Sram::b_transport(tlm_generic_payload &trans, sc_time &delay)
         }
     }
 
-    // Add base SRAM latency and advance time so Bridge sees it
-    delay += mem_latency;
-
+    // Add base SRAM latency
+    delay += timing::SRAM_RW;
     trans.set_response_status(TLM_OK_RESPONSE);
 }
 
@@ -127,7 +132,7 @@ void Sram::compute_in_memory(sc_core::sc_time &delay)
     }
 
     // Derive number of tiles for 64-wide macro mapping
-    const int tiles = (MNIST_IMAGE_SIZE + TILE_W - 1) / TILE_W; // 13 tiles for 784 pixels and 64x64 macro size
+    const int tiles = (MNIST_IMAGE_SIZE + timing::TILE_W - 1) / timing::TILE_W; // 13 tiles for 784 pixels and 64x64 macro size
 
     // Typed pointers into/from the SRAM backing store
     int8_t  *W = reinterpret_cast<int8_t*>(&mem[WEIGHT_BASE_ADDR]);
@@ -142,14 +147,14 @@ void Sram::compute_in_memory(sc_core::sc_time &delay)
 
         // Accumulate in tiles of 64 inputs to reflect 64-wide CIM macro mapping
         for (int t = 0; t < tiles; t++) {
-            const int base = t * TILE_W;
-            const int end  = std::min(base + TILE_W, (int)MNIST_IMAGE_SIZE);
+            const int base = t * timing::TILE_W;
+            const int end  = std::min((base + (int)timing::TILE_W), (int)MNIST_IMAGE_SIZE);
 
             // Dot-product chunk: x[base:end] · W[i][base:end]
             for (int j = base; j < end; j++) {
                 // Enforce signed-4b semantics even though stored as int8
                 const uint8_t xv = clamp_u4((int)x[j]);
-                const uint8_t wv = clamp_u4((int)W[i * MNIST_IMAGE_SIZE + j]);
+                const int8_t wv = clamp_s4((int)W[i * MNIST_IMAGE_SIZE + j]);
 
                 // Multiply-accumulate into 32-bit accumulator
                 acc += (int32_t)xv * (int32_t)wv;
@@ -159,12 +164,5 @@ void Sram::compute_in_memory(sc_core::sc_time &delay)
         y[i] = acc;
     }
 
-    // ---- Timing model  ----
-    // tile_cycles = 4 tiles for 4b inputs
-    // cycle_ns = 10 ns for 100 MHz
-    // total_ns = tiles * tile_cycles * cycle_ns
-    const uint64_t total_ns =
-        (uint64_t)tiles * (uint64_t)CYCLES_PER_TILE * (uint64_t)CYCLE_NS;
-
-    delay += sc_time(total_ns, SC_NS);
+    delay += timing::cim_time(tiles);
 }
