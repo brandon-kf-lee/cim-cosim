@@ -1,0 +1,3 @@
+sc_dev: connected to SystemC at /tmp/systemc.sock
+sc_dev: DMA intialized
+sc_dev: IRQ lines intialized

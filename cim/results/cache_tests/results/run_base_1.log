@@ -1,0 +1,49 @@
+sc_dev: connected to SystemC at /tmp/systemc.sock
+sc_dev: DMA intialized
+sc_dev: IRQ lines intialized
+core #, data accesses, data misses, dmiss rate, insn accesses, insn misses, imiss rate
+0       291556447      2309371         0.7921%  1294404362     3023663         0.2336%
+
+address, data misses, instruction
+0x7fb544127bf4, 416350, ld                      a4,0(s7)
+0x7fb544127bee, 134767, ld                      s7,0(s8)
+0x7fb544b5d51c, 101422, sd                      a1,192(t0)
+0x7fb544b5d4bc, 98460, sd                      a1,0(t0)
+0x7fb544b5d4dc, 98222, sd                      a1,64(t0)
+0x7fb544b5d4fc, 97674, sd                      a1,128(t0)
+0x7fb544c157f6, 32768, sw                      a5,52(a0)
+0x7fb54423f70e, 31648, sd                      s2,0(s3)
+0x7fb544b5d6e0, 25064, ld                      t1,0(t0)
+0x7fb544c19a06, 20727, ld                      a6,0(a5)
+0x7fb5442333f4, 18454, ld                      a5,0(s3)
+0x7fb544082e9e, 16440, lr.w                    a1,(a0)
+0x7fb5441c72a4, 14809, ld                      a4,8(a0)
+0x7fb54430637a, 14524, lw                      a5,32(s1)
+0x7fb544b5d708, 13526, ld                      t1,8(t0)
+0x7fb544c15cbe, 12037, ld                      a4,0(a5)
+0x7fb544b5d658, 11541, ld                      t0,0(a0)
+0x7fb544b3da7c, 11422, ld                      a0,0(s1)
+0x7fb5440c417c, 11221, sd                      a5,560(s1)
+0x7fb544244024, 11030, ld                      a3,0(a5)
+
+address, fetch misses, instruction
+0x7fb544b4fb68, 20677, addi                    sp,sp,-16
+0x7fb544073b24, 20405, lbu                     a5,81(a2)
+0x7fb544065ba0, 20150, addi                    sp,sp,-64
+0x7fb544b4fb96, 19931, andi                    a0,a4,-4
+0x7fb544073b42, 19833, bltz                    a5,70                   # 0xffffffff80073b88
+0x7fb5440654c0, 19742, sd                      ra,72(sp)
+0x7fb5440754f2, 19723, ld                      ra,40(sp)
+0x7fb544075482, 19696, and                     s2,a4,s2
+0x7fb544073b8e, 19528, addi                    t1,zero,1023
+0x7fb5440654bc, 19276, addi                    sp,sp,-80
+0x7fb544b694c0, 19193, ld                      tp,32(sp)
+0x7fb544b5db80, 19177, ld                      ra,40(sp)
+0x7fb54407cf40, 19175, ld                      ra,8(sp)
+0x7fb544b6949a, 19121, ld                      s0,256(sp)
+0x7fb5448f5480, 19080, add                     a0,a0,a5
+0x7fb5440c5b9a, 18967, ld                      a4,288(s1)
+0x7fb544b5db1c, 18922, addi                    sp,sp,-48
+0x7fb5440cfb00, 18872, bgez                    a5,-110                 # 0xffffffff800cfa92
+0x7fb54405cf58, 18867, lui                     a5,1
+0x7fb544b5e700, 18814, addi                    sp,sp,32
