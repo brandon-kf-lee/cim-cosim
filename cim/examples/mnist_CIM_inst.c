@@ -1,9 +1,7 @@
 /*
  * mnist_CIM_inst.c - MNIST inference using CIM userspace library (INT4/INT4 path)
- * with perf_event_open gating (instructions/cycles) around chosen regions.
+ * with perf_event_open gating (instructions) around chosen regions.
  *
- * --measure total : counts (weights+bias DMA once) + (steady-state loop), excludes warmup
- * --measure steady: counts steady-state loop only, excludes warmup
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -19,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 int main(int argc, char **argv)
 {
@@ -26,159 +25,154 @@ int main(int argc, char **argv)
     int prc = mnist_bench_parse_args(&opts, argc, argv);
     if (prc != 0) return prc;
 
-    /* ---- load network (outside measurement) ---- */
-    neural_network_q4_t network_q4;
-    if (read_exact_file(opts.path_network, &network_q4, sizeof(network_q4)) != 0)
-        return 1;     
+    /* ---------------- Simulation Overhead ---------------- */
+    // Load Quantized Network (heap allocate for better chances of contiguous mem allocation)
+    neural_network_q4_t *network_q4 = NULL;
+    if (posix_memalign((void **)&network_q4, 4096, sizeof(neural_network_q4_t)) != 0) {
+        perror("posix_memalign network");
+        return 1;
+    }
+    if (mlock(network_q4, sizeof(neural_network_q4_t)) != 0) perror("mlock network");
 
-    /* ---- load image(s) (outside measurement) ---- */
-    mnist_image_t single_img;
+    if (read_exact_file(opts.path_network, network_q4, sizeof(*network_q4)) != 0)
+        return 1;
+
+    // Load Image(s)
     mnist_dataset_t dataset;
     memset(&dataset, 0, sizeof(dataset));
+    if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0) return 1; 
 
-    if (opts.mode == MODE_SINGLE) {
-        if (read_exact_file(opts.path_image, &single_img, sizeof(single_img)) != 0)
-            return 1;
-    } else {
-        if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0)
-            return 1;
-    }  
+    // Prep Variables
+    cim_dev_t *dev = NULL;              // CIM device
+    int rc = 0;                         // CIM return values
+    uint8_t *input_q = NULL;            // Quantized image input
+    int32_t *logits  = NULL;            // Raw output
+    uint64_t input_q_phys, logits_phys; // Physical addresses
 
-    /* ---- init CIM ---- */
-    cim_dev_t *dev = NULL;
+    // Align allocated memory to page size
+    if (posix_memalign((void **)&input_q, 4096, MNIST_IMAGE_SIZE) != 0 || !input_q) {
+        perror("posix_memalign input_q");
+        goto out;
+    }
+    if (posix_memalign((void **)&logits, 4096, sizeof(int32_t) * MNIST_LABELS) != 0 || !logits) {
+        perror("posix_memalign logits");
+        goto out;
+    }
+    
+    // Lock virtual address space into RAM to prevent paging
+    if (mlock(input_q, MNIST_IMAGE_SIZE) != 0) perror("mlock input_q");
+    if (mlock(logits, sizeof(int32_t) * MNIST_LABELS) != 0) perror("mlock logits");
+
+    memset(input_q, 0, MNIST_IMAGE_SIZE);
+    memset(logits,  0, sizeof(int32_t) * MNIST_LABELS);
+
+    /* ---------------- Perf Setup ---------------- */
+    perf_gate_t pg_setup, pg_infr;
+    if (perf_gate_init(&pg_setup) != 0) die_errno("perf_gate_init (check perf_event permissions)");
+    if (perf_gate_init(&pg_infr) != 0) die_errno("perf_gate_init (check perf_event permissions)");
+
+
+    /* ---------------- Inference Setup ---------------- */
+    if (perf_gate_reset_enable(&pg_setup) != 0) die_errno("perf_gate_reset_enable");
+    
+    // CIM Init
     cim_config_t cfg = {0};
     cfg.dma_mode = CIM_DMA_PAGED;
-    cfg.timeouts.dma_ms = 1000;
-    cfg.timeouts.ctrl_ms = 5000;
     cfg.debug = 0;
 
-    int rc = cim_init(&dev, &cfg);
+    rc = cim_init(&dev, &cfg);
     if (rc != CIM_OK) {
         fprintf(stderr, "cim_init failed: %s (%d)\n", cim_strerror(rc), rc);
         free_dataset(&dataset);
         return 1;
     }
 
-    /* ---- perf setup ---- */
-    perf_gate_t pg;
-    if (perf_gate_init(&pg) != 0) die_errno("perf_gate_init (check perf_event permissions)");
+    // Convert image's virtual address to physical 
+    rc = io_virt_to_phys(dev, input_q, logits, &input_q_phys, &logits_phys);
+    if (rc != CIM_OK) goto out;
 
-    /* ---- load weights/bias once (counted only for TOTAL; warmup excluded later) ---- */
-    if (opts.meas == MEAS_TOTAL) {
-        if (perf_gate_reset_enable(&pg) != 0) die_errno("perf_gate_reset_enable");
-    }
+    // Pre-configure input & output locations, since it doesn't change between inferences
+    rc = cim_configure_inference(dev,
+                                 input_q_phys, MNIST_IMAGE_SIZE,
+                                 logits_phys, sizeof(int32_t) * MNIST_LABELS,
+                                 INPUT_BASE_ADDR, OUTPUT_BASE_ADDR);
+    if (rc != CIM_OK) goto out;    
 
-    rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network_q4.W, sizeof(network_q4.W));
+    /* TODO: can definitely be made more efficient, with less function call jumps */
+    /* ---------------- Weight & Bias DMA Region ---------------- */
+    rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network_q4->W, sizeof(network_q4->W));
     if (rc != CIM_OK) { fprintf(stderr, "DMA weights failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
 
-    rc = cim_dma_write_sram(dev, BIAS_BASE_ADDR, network_q4.b, sizeof(network_q4.b));
+    rc = cim_dma_write_sram(dev, BIAS_BASE_ADDR, network_q4->b, sizeof(network_q4->b));
     if (rc != CIM_OK) { fprintf(stderr, "DMA bias failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
 
-    if (opts.meas == MEAS_TOTAL) {
-        /* stop counting so warmup doesn't get included */
-        if (perf_gate_disable(&pg) != 0) die_errno("perf_gate_disable");
+    /* Pre-compute dequantization scaling factors (reduces work done in main loop)
+       Necessary for comparable scores with per-class w_scale */
+    float k[MNIST_LABELS];
+    for (int i = 0; i < MNIST_LABELS; i++) {
+        k[i] = network_q4->x_scale * network_q4->w_scale[i];
     }
 
-    /* ---- Input & Output Variables ---- */
-    uint8_t input_q[MNIST_IMAGE_SIZE];   // Quantized MNIST input image
-    int32_t logits[MNIST_LABELS];        // Raw, unnormalized output values 
-
-    /* ---- warmup loop (never measured) ---- */
-    for (uint64_t it = 0; it < opts.warmup; it++) {
-        const mnist_image_t *img = &single_img;
-        if (opts.mode == MODE_T10K) img = &dataset.images[it % dataset.size];
-
-        // Quantize MNIST image to 4 bits per pixel
-        quantize_image_to_u4(img, input_q);
+    if (perf_gate_disable(&pg_setup) != 0) die_errno("perf_gate_disable");
 
 
-        rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, input_q, sizeof(input_q));
-        if (rc != CIM_OK) goto out;
-
-        rc = cim_compute(dev);
-        if (rc != CIM_OK) goto out;
-
-        /* no softmax needed for warmup */
-    }
-
-    /* ---- measured steady-state region ---- */
-    /* Steady state only: reset counts and start */
-    if (opts.meas == MEAS_STEADY) {
-        if (perf_gate_reset_enable(&pg) != 0) die_errno("perf_gate_reset_enable");
-   
-    /* Total measurement: resume from warmup without reset */
-    } else if (opts.meas == MEAS_TOTAL) {
-        if (perf_gate_enable(&pg) != 0) die_errno("perf_gate_enable");
-    }
-
+    /* ---------------- Inference Region ---------------- */
+    if (perf_gate_reset_enable(&pg_infr) != 0) die_errno("perf_gate_reset_enable");
+    
+    // Accuracy metrics
     uint64_t correct = 0, total = 0;
+    
     for (uint64_t it = 0; it < opts.iters; it++) {
-        const mnist_image_t *img = &single_img;
-        int label = -1;
-
-        // New image if looping through dataset
-        if (opts.mode == MODE_T10K) {
-            uint32_t idx = (uint32_t)(it % dataset.size);
-            img = &dataset.images[idx];
-            label = dataset.labels[idx];
-        }
+        
+        // Load image from dataset 
+        uint32_t idx = (uint32_t)(it % dataset.size);
+        const mnist_image_t *img = &dataset.images[idx];
+        int label = dataset.labels[idx];
 
         // Quantize MNIST image to 4 bits per pixel
         quantize_image_to_u4(img, input_q);
 
-        // DMA to SRAM
-        rc = cim_dma_write_sram(dev, INPUT_BASE_ADDR, input_q, sizeof(input_q));
+        // Start and wait for asynchronous inference
+        cim_start_inference(dev);
+        rc = cim_wait_inference(dev);
         if (rc != CIM_OK) goto out;
 
-        // Start compute
-        rc = cim_compute(dev);
-        if (rc != CIM_OK) goto out;
-
-        // Read logits output
-        rc = cim_dma_read_sram(dev, OUTPUT_BASE_ADDR, logits, sizeof(logits));
-        if (rc != CIM_OK) goto out;
-
-        /* Per-class dequantization for comparable scores (required with per-class w_scale) */
-        float scores[MNIST_LABELS];
-        for (int i = 0; i < MNIST_LABELS; i++) {
-            scores[i] = (float)logits[i] * (network_q4.x_scale * network_q4.w_scale[i]);
+        // Argmax with integrated per-class dequantization
+        int pred = 0;
+        float best = (float)logits[0] * k[0];
+        for (int i = 1; i < MNIST_LABELS; i++) {
+            float s = (float)logits[i] * k[i];
+            if (s > best) { best = s; pred = i; }
         }
-
-        int pred = argmax_f32(scores, MNIST_LABELS);
-
+        
+        // Increment correct predictions
+        total++;
+        if (pred == label) correct++;
+        
+        // Print out each image prediction on verbose
         if (opts.verbose) {
-            if (opts.mode == MODE_T10K) {
-                printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
-
-                // Increment total evaluated & correctness
-                total++;
-                if (pred == label) correct++;
-            } else { 
-                printf("it=%" PRIu64 " pred=%d\n", it, pred);
-            }
+            printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
         }
     }
 
-    /* Stop all measurement */
-    if (perf_gate_disable(&pg) != 0) die_errno("perf_gate_disable");
+    if (perf_gate_disable(&pg_infr) != 0) die_errno("perf_gate_disable");
 
-    /* ---- read counters and print once (outside measurement) ---- */
-    uint64_t instr = 0, cycles = 0;
-    if (perf_gate_read(&pg, &instr, &cycles) != 0) die_errno("perf_gate_read");
 
-    printf("perf: instructions=%" PRIu64 " cycles=%" PRIu64 "\n", instr, cycles);
-    printf("perf: instructions/iter=%.2f cycles/iter=%.2f\n",
-           (double)instr / (double)opts.iters, (double)cycles / (double)opts.iters);
+    /* ---- read counters and print (outside measurement) ---- */
+    uint64_t setup_instr, infr_instr = 0;
+    if (perf_gate_read(&pg_setup, &setup_instr) != 0) die_errno("perf_gate_read");
+    if (perf_gate_read(&pg_infr, &infr_instr) != 0) die_errno("perf_gate_read");
 
-    if (opts.verbose && opts.mode == MODE_T10K) {
-        printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
+    printf("perf: setup instructions=     %" PRIu64 "\n", setup_instr);
+    printf("perf: inference instructions= %" PRIu64 "\n", infr_instr);
+
+    //printf("perf: instructions/iter=%.2f\n", (double)instr / (double)opts.iters);
+
+    printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
                correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
-    }
-
 out:
-    perf_gate_close(&pg);
-    cim_close(dev);
     free_dataset(&dataset);
+    cim_close(dev);
 
     if (rc != CIM_OK) {
         fprintf(stderr, "ERROR: CIM failure: %s (%d)\n", cim_strerror(rc), rc);
