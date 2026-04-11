@@ -16,17 +16,11 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+/* Pull in DMA API */
+#include "cim_dma.h"
+
 #include <stdint.h>
 #include <stddef.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <inttypes.h>
-#include <poll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,14 +28,10 @@ extern "C" {
 
 typedef struct cim_dev cim_dev_t;
 
-typedef enum cim_dma_mode {
-    CIM_DMA_PAGED = 0,
-    CIM_DMA_SINGLE_PHYS = 1,
-} cim_dma_mode_t;
-
 typedef struct cim_timeouts {
     int dma_ms;                 /* timeout per DMA transaction/chunk */
     int ctrl_ms;                /* timeout waiting for CTRL completion */
+    int job_ms;                 /* timeout waiting for end-to-end inference completion */
 } cim_timeouts_t;
 
 typedef struct cim_config {
@@ -53,6 +43,7 @@ typedef struct cim_config {
     /* IRQ character devices (provided by kernel module) */
     const char *dma_irq_path;   /* default: "/dev/sc_dev_dma" */
     const char *ctrl_irq_path;  /* default: "/dev/sc_dev_ctrl" */
+    const char *job_irq_path;   /* default: "/dev/sc_dev_job" */
 
     /* DMA behavior */
     cim_dma_mode_t dma_mode;    /* default: CIM_DMA_PAGED */
@@ -112,16 +103,25 @@ int cim_read_sram_u32_irq(cim_dev_t *dev,
                           uint32_t sram_addr,
                           uint32_t *out_u32);
 
-/* Read a float stored as IEEE-754 bits in SRAM (IRQ-driven read). */
-int cim_read_sram_f32_irq(cim_dev_t *dev,
-                          uint32_t sram_addr,
-                          float *out_f32);
-
 /* Read the registers that stores the total excess time due to waiting for device & socket overhead. */
 int cim_read_correction(cim_dev_t *dev, 
                         int64_t *out_i64);
 
 int cim_clear_correction(cim_dev_t *dev);
+
+/* Program Job registers with input & output registers */
+int cim_configure_inference(cim_dev_t *dev,
+                            uint64_t input_phys, uint32_t input_len,
+                            uint64_t output_phys, uint32_t output_len,
+                            uint32_t input_dst_sram, uint32_t output_src_sram);
+
+/* Start execution 
+ * Assumed cim_configure_inference() was already ran
+ */
+int cim_start_inference(cim_dev_t *dev);
+
+/* Wait for one IRQ from Job's completion */
+int cim_wait_inference(cim_dev_t *dev);
 
 #ifdef __cplusplus
 } /* extern "C" */
