@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     int prc = mnist_bench_parse_args(&opts, argc, argv);
     if (prc != 0) return prc;
 
- /* ---------------- Simulation Overhead ---------------- */
+    /* ---------------- Simulation Overhead ---------------- */
     // Load Quantized Network
     neural_network_q4_t network_q4;
     if (read_exact_file(opts.path_network, &network_q4, sizeof(network_q4)) != 0)
