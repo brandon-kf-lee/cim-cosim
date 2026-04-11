@@ -1,0 +1,158 @@
+/*
+ * mnist_CIM.c - MNIST inference using CIM userspace library (INT4/INT4 path)
+ * Used to test effects of cache on inference
+ * Hard coded t10k mode
+ * Uninstrumented code
+ */
+
+#define _POSIX_C_SOURCE 200809L
+
+#include "cim.h"
+#include "mnist.h"
+#include "mnist_bench.h"
+#include "perf_gate.h"
+
+#include <errno.h>
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+
+int main(int argc, char **argv)
+{
+    mnist_bench_opts_t opts;
+    int prc = mnist_bench_parse_args(&opts, argc, argv);
+    if (prc != 0) return prc;
+
+    /* ---------------- Simulation Overhead ---------------- */
+    // Load Quantized Network (heap allocate for better chances of contiguous mem allocation)
+    neural_network_q4_t *network_q4 = NULL;
+    if (posix_memalign((void **)&network_q4, 4096, sizeof(neural_network_q4_t)) != 0) {
+        perror("posix_memalign network");
+        return 1;
+    }
+    if (mlock(network_q4, sizeof(neural_network_q4_t)) != 0) perror("mlock network");
+
+    if (read_exact_file(opts.path_network, network_q4, sizeof(*network_q4)) != 0)
+        return 1;
+
+    // Load Image(s)
+    mnist_dataset_t dataset;
+    memset(&dataset, 0, sizeof(dataset));
+    if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0) return 1; 
+
+    // Prep Input & Output Variables
+    int rc = 0;                         // CIM return values
+    uint8_t *input_q = NULL;            // Quantized image input
+    int32_t *logits  = NULL;            // Raw output
+    uint64_t input_q_phys, logits_phys; // Physical addresses
+
+    // Align allocated memory to page size
+    if (posix_memalign((void **)&input_q, 4096, MNIST_IMAGE_SIZE) != 0 || !input_q) {
+        perror("posix_memalign input_q");
+        goto out;
+    }
+    if (posix_memalign((void **)&logits, 4096, sizeof(int32_t) * MNIST_LABELS) != 0 || !logits) {
+        perror("posix_memalign logits");
+        goto out;
+    }
+    
+    // Lock virtual address space into RAM to prevent paging
+    if (mlock(input_q, MNIST_IMAGE_SIZE) != 0) perror("mlock input_q");
+    if (mlock(logits, sizeof(int32_t) * MNIST_LABELS) != 0) perror("mlock logits");
+
+    memset(input_q, 0, MNIST_IMAGE_SIZE);
+    memset(logits,  0, sizeof(int32_t) * MNIST_LABELS);
+
+    /* ---------------- Inference Setup ---------------- */
+    // CIM Init
+    cim_dev_t *dev = NULL;
+    cim_config_t cfg = {0};
+    cfg.dma_mode = CIM_DMA_PAGED;
+    cfg.debug = 0;
+
+    rc = cim_init(&dev, &cfg);
+    if (rc != CIM_OK) {
+        fprintf(stderr, "cim_init failed: %s (%d)\n", cim_strerror(rc), rc);
+        free_dataset(&dataset);
+        return 1;
+    }
+
+    // Convert image's virtual address to physical 
+    rc = io_virt_to_phys(dev, input_q, logits, &input_q_phys, &logits_phys);
+    if (rc != CIM_OK) goto out;
+
+    // Pre-configure input & output locations, since it doesn't change between inferences
+    rc = cim_configure_inference(dev,
+                                 input_q_phys, MNIST_IMAGE_SIZE,
+                                 logits_phys, sizeof(int32_t) * MNIST_LABELS,
+                                 INPUT_BASE_ADDR, OUTPUT_BASE_ADDR);
+    if (rc != CIM_OK) goto out;    
+
+    /* TODO: can definitely be made more efficient, with less function call jumps */
+    /* ---------------- Weight & Bias DMA Region ---------------- */
+    rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network_q4->W, sizeof(network_q4->W));
+    if (rc != CIM_OK) { fprintf(stderr, "DMA weights failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
+
+    rc = cim_dma_write_sram(dev, BIAS_BASE_ADDR, network_q4->b, sizeof(network_q4->b));
+    if (rc != CIM_OK) { fprintf(stderr, "DMA bias failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
+
+    /* Pre-compute dequantization scaling factors (reduces work done in main loop)
+       Necessary for comparable scores with per-class w_scale */
+    float k[MNIST_LABELS];
+    for (int i = 0; i < MNIST_LABELS; i++) {
+        k[i] = network_q4->x_scale * network_q4->w_scale[i];
+    }
+
+    /* ---------------- Inference Region ---------------- */
+    // Accuracy metrics
+    uint64_t correct = 0, total = 0;
+    
+    for (uint64_t it = 0; it < opts.iters; it++) {
+        
+        // Load image from dataset 
+        uint32_t idx = (uint32_t)(it % dataset.size);
+        const mnist_image_t *img = &dataset.images[idx];
+        int label = dataset.labels[idx];
+
+        // Quantize MNIST image to 4 bits per pixel
+        quantize_image_to_u4(img, input_q);
+
+        // Start and wait for asynchronous inference
+        cim_start_inference(dev);
+        rc = cim_wait_inference(dev);
+        if (rc != CIM_OK) goto out;
+
+        // Argmax with integrated per-class dequantization
+        int pred = 0;
+        float best = (float)logits[0] * k[0];
+        for (int i = 1; i < MNIST_LABELS; i++) {
+            float s = (float)logits[i] * k[i];
+            if (s > best) { best = s; pred = i; }
+        }
+        
+        // Increment correct predictions
+        total++;
+        if (pred == label) correct++;
+        
+        // Print out each image prediction on verbose
+        if (opts.verbose) {
+            printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
+        }
+    }
+
+    printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
+           correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
+
+out:
+    free_dataset(&dataset);
+    cim_close(dev);
+
+    if (rc != CIM_OK) {
+        fprintf(stderr, "ERROR: CIM failure: %s (%d)\n", cim_strerror(rc), rc);
+        return 1;
+    }
+    return 0;
+}
