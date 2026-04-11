@@ -35,14 +35,16 @@
 
 #define IRQ_CTRL_DONE  (1u << 0)
 #define IRQ_DMA_DONE   (1u << 1)
+#define IRQ_JOB_DONE   (1u << 2)
 
 struct sc_dev {
 	void __iomem *base;
 	int irq_dma;
 	int irq_ctrl;
+	int irq_job;
 
 	/* One wait queue per "channel" (/dev node). */
-	wait_queue_head_t dma_wq, ctrl_wq;
+	wait_queue_head_t dma_wq, ctrl_wq, job_wq;
 
 	/*
 	 * Counting semantics:
@@ -51,12 +53,14 @@ struct sc_dev {
 	 */
 	u32 dma_count;
 	u32 ctrl_count;
+	u32 job_count;
 
 	spinlock_t lock;
 
 	/* Two miscdevices for two separate /dev nodes. */
 	struct miscdevice misc_dma;
 	struct miscdevice misc_ctrl;
+	struct miscdevice misc_job;
 };
 
 /*
@@ -85,11 +89,13 @@ static irqreturn_t sc_dev_isr(int irq, void *data)
 	spin_lock_irqsave(&dev->lock, flags);
 		if (status & IRQ_DMA_DONE) dev->dma_count++;
 		if (status & IRQ_CTRL_DONE) dev->ctrl_count++;
+		if (status & IRQ_JOB_DONE) dev->job_count++;
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	/* Wake any readers waiting in read(). */
 	if (status & IRQ_DMA_DONE) wake_up_interruptible(&dev->dma_wq);
 	if (status & IRQ_CTRL_DONE) wake_up_interruptible(&dev->ctrl_wq);
+	if (status & IRQ_JOB_DONE) wake_up_interruptible(&dev->job_wq);
 
 	return IRQ_HANDLED;
 }
@@ -157,12 +163,57 @@ static ssize_t sc_dev_ctrl_read(struct file *f, char __user *buf,
 	if (len < sizeof(count))
 		return -EINVAL;
 
+	/*
+	 * Block until at least one CTRL interrupt has been observed.
+	 * The condition is re-checked after every wakeup.
+	 */
 	if (wait_event_interruptible(dev->ctrl_wq, READ_ONCE(dev->ctrl_count) != 0))
 		return -ERESTARTSYS;
 
+	/*
+	 * Return-and-clear the accumulated count atomically.
+	 * This guarantees counting semantics: no events are dropped between wake and clear.
+	 */
 	spin_lock_irqsave(&dev->lock, flags);
 		count = dev->ctrl_count;
 		dev->ctrl_count = 0;
+	spin_unlock_irqrestore(&dev->lock, flags);
+
+	if (copy_to_user(buf, &count, sizeof(count)))
+		return -EFAULT;
+
+	return sizeof(count);
+}
+
+/*
+ * /dev/sc_dev_job: 
+ * blocking read() returns a u32 count of JOB_DONE interrupts
+ * that occurred since the last successful read() on this device node.
+ */
+static ssize_t sc_dev_job_read(struct file *f, char __user *buf,
+				size_t len, loff_t *ppos)
+{
+	struct sc_dev *dev = sc_dev_from_file(f);
+	unsigned long flags;
+	u32 count;
+
+	if (len < sizeof(count))
+		return -EINVAL;
+
+	/*
+	 * Block until at least one JOB interrupt has been observed.
+	 * The condition is re-checked after every wakeup.
+	 */
+	if (wait_event_interruptible(dev->job_wq, READ_ONCE(dev->job_count) != 0))
+		return -ERESTARTSYS;
+
+	/*
+	 * Return-and-clear the accumulated count atomically.
+	 * This guarantees counting semantics: no events are dropped between wake and clear.
+	 */
+	spin_lock_irqsave(&dev->lock, flags);
+		count = dev->job_count;
+		dev->job_count = 0;
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	if (copy_to_user(buf, &count, sizeof(count)))
@@ -183,6 +234,13 @@ static const struct file_operations sc_dev_ctrl_fops = {
 	.read   = sc_dev_ctrl_read,
 	.llseek = noop_llseek,
 };
+
+static const struct file_operations sc_dev_job_fops = {
+	.owner  = THIS_MODULE,
+	.read   = sc_dev_job_read,
+	.llseek = noop_llseek,
+};
+
 
 /* ---------- probe/remove ---------- */
 
@@ -212,12 +270,18 @@ static int sc_dev_probe(struct platform_device *pdev)
 	if (dev->irq_ctrl < 0)
 		return dev->irq_ctrl;
 
+	dev->irq_job = platform_get_irq(pdev, 2);
+	if (dev->irq_job < 0)
+		return dev->irq_ctrl;
+
 	init_waitqueue_head(&dev->dma_wq);
 	init_waitqueue_head(&dev->ctrl_wq);
+	init_waitqueue_head(&dev->job_wq);
 	spin_lock_init(&dev->lock);
 
 	dev->dma_count = 0;
 	dev->ctrl_count = 0;
+	dev->job_count = 0;
 
 	/* Make sc_dev retrievable from miscdevice->parent via dev_get_drvdata(). */
 	platform_set_drvdata(pdev, dev);
@@ -244,7 +308,20 @@ static int sc_dev_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	/* Request both IRQ lines. */
+	/* Create /dev/sc_dev_job */
+	dev->misc_job.minor  = MISC_DYNAMIC_MINOR;
+	dev->misc_job.name   = "sc_dev_job";
+	dev->misc_job.fops   = &sc_dev_job_fops;
+	dev->misc_job.parent = &pdev->dev;
+
+	ret = misc_register(&dev->misc_job);
+	if (ret) {
+		misc_deregister(&dev->misc_dma);
+		misc_deregister(&dev->misc_ctrl);
+		return ret;
+	}
+
+	/* Request IRQ lines. */
 	ret = devm_request_irq(&pdev->dev, dev->irq_dma, sc_dev_isr, 0,
 			       "sc_dev-dma", dev);
 	if (ret)
@@ -255,14 +332,20 @@ static int sc_dev_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_misc;
 
-	/* Enable device-side IRQ generation. */
-	writel(IRQ_CTRL_DONE | IRQ_DMA_DONE, dev->base + REG_IRQ_ENABLE);
+	ret = devm_request_irq(&pdev->dev, dev->irq_job, sc_dev_isr, 0,
+			       "sc_dev-job", dev);
+	if (ret)
+		goto err_misc;
 
-	dev_info(&pdev->dev, "probed, /dev/%s and /dev/%s ready\n",
-		 dev->misc_dma.name, dev->misc_ctrl.name);
+	/* Enable device-side IRQ generation. */
+	writel(IRQ_CTRL_DONE | IRQ_DMA_DONE | IRQ_JOB_DONE, dev->base + REG_IRQ_ENABLE);
+
+	dev_info(&pdev->dev, "probed, /dev/%s, /dev/%s, and /dev/%s ready\n",
+		 dev->misc_dma.name, dev->misc_ctrl.name, dev->misc_job.name);
 	return 0;
 
 err_misc:
+	misc_deregister(&dev->misc_job);
 	misc_deregister(&dev->misc_ctrl);
 	misc_deregister(&dev->misc_dma);
 	return ret;
@@ -277,6 +360,7 @@ static void sc_dev_remove(struct platform_device *pdev)
 		writel(0, dev->base + REG_IRQ_ENABLE);
 
 	if (dev) {
+		misc_deregister(&dev->misc_job);
 		misc_deregister(&dev->misc_ctrl);
 		misc_deregister(&dev->misc_dma);
 	}
@@ -299,4 +383,4 @@ static struct platform_driver sc_dev_driver = {
 module_platform_driver(sc_dev_driver);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("sc_dev IRQ driver: /dev/sc_dev_dma and /dev/sc_dev_ctrl (counting, blocking read)");
+MODULE_DESCRIPTION("sc_dev IRQ driver: /dev/sc_dev_dma, /dev/sc_dev_ctrl, and /dev/sc_dev_job (counting, blocking read)");
