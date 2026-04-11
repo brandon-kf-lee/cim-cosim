@@ -1,8 +1,6 @@
 /*
  * mnist_CPU - MNIST inference using ONLY CPU calculations (INT4/INT4 path)
  * Used to test effects of cache on inference.
- * Hard coded t10k mode
- * Uninstrumented code
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -52,13 +50,22 @@ int main(int argc, char **argv)
     uint8_t input_q[MNIST_IMAGE_SIZE];   // Quantized MNIST input image    
     int32_t acc[MNIST_LABELS];           // Activations
 
-    
+    // End of overhead section
+    if (opts.section == SEC_OVERHEAD) {
+        goto out;
+    }
+
     /* ---------------- Inference Setup ---------------- */
     /* Pre-compute dequantization scaling factors (reduces work done in main loop)
        Necessary for comparable scores with per-class w_scale */
     float k[MNIST_LABELS];
     for (int i = 0; i < MNIST_LABELS; i++) {
         k[i] = network_q4.x_scale * network_q4.w_scale[i];
+    }
+
+    // End of setup section
+    if (opts.section == SEC_SETUP) {
+        goto out;
     }
 
     /* ---------------- Inference Region ---------------- */
@@ -97,6 +104,7 @@ int main(int argc, char **argv)
     printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
            correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
 
+out:
     free_dataset(&dataset);
     return 0;
 }

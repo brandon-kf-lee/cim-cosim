@@ -1,8 +1,6 @@
 /*
  * mnist_CIM.c - MNIST inference using CIM userspace library (INT4/INT4 path)
  * Used to test effects of cache on inference
- * Hard coded t10k mode
- * Uninstrumented code
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -43,7 +41,8 @@ int main(int argc, char **argv)
     memset(&dataset, 0, sizeof(dataset));
     if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0) return 1; 
 
-    // Prep Input & Output Variables
+    // Prep Variables
+    cim_dev_t *dev = NULL;              // CIM device
     int rc = 0;                         // CIM return values
     uint8_t *input_q = NULL;            // Quantized image input
     int32_t *logits  = NULL;            // Raw output
@@ -66,9 +65,13 @@ int main(int argc, char **argv)
     memset(input_q, 0, MNIST_IMAGE_SIZE);
     memset(logits,  0, sizeof(int32_t) * MNIST_LABELS);
 
+    // End of overhead section
+    if (opts.section == SEC_OVERHEAD) {
+        goto out;
+    }
+
     /* ---------------- Inference Setup ---------------- */
     // CIM Init
-    cim_dev_t *dev = NULL;
     cim_config_t cfg = {0};
     cfg.dma_mode = CIM_DMA_PAGED;
     cfg.debug = 0;
@@ -91,7 +94,6 @@ int main(int argc, char **argv)
                                  INPUT_BASE_ADDR, OUTPUT_BASE_ADDR);
     if (rc != CIM_OK) goto out;    
 
-    /* TODO: can definitely be made more efficient, with less function call jumps */
     /* ---------------- Weight & Bias DMA Region ---------------- */
     rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network_q4->W, sizeof(network_q4->W));
     if (rc != CIM_OK) { fprintf(stderr, "DMA weights failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
@@ -104,6 +106,11 @@ int main(int argc, char **argv)
     float k[MNIST_LABELS];
     for (int i = 0; i < MNIST_LABELS; i++) {
         k[i] = network_q4->x_scale * network_q4->w_scale[i];
+    }
+
+    // End of setup section
+    if (opts.section == SEC_SETUP) {
+        goto out;
     }
 
     /* ---------------- Inference Region ---------------- */
@@ -148,7 +155,11 @@ int main(int argc, char **argv)
 
 out:
     free_dataset(&dataset);
-    cim_close(dev);
+    if (dev) cim_close(dev);
+
+    if (network_q4) free(network_q4);
+    if (input_q) free(input_q);
+    if (logits) free(logits);
 
     if (rc != CIM_OK) {
         fprintf(stderr, "ERROR: CIM failure: %s (%d)\n", cim_strerror(rc), rc);
