@@ -16,7 +16,8 @@
 
 #include "include/mem_controller_registers.h"
 
-#define DMA_BUFFER_SIZE 4096   // 4KB
+#define DMA_BUFFER_SIZE (16 * 1024 * 1024)   // 16MB maximum burst size
+#define BRIDGE_HEADER_SIZE sizeof(struct bridge_msg)
 
 struct bridge_msg {
     uint8_t  is_write;
@@ -27,10 +28,9 @@ struct bridge_msg {
     uint64_t addr;
     uint32_t size;
 
-    uint8_t  data[DMA_BUFFER_SIZE];
     uint64_t simulated_ns;
-
-    int8_t status;
+    int8_t   status;
+    uint8_t  pad[7];   /* keep alignment/size neat */
 } __attribute__((packed));  /* Ensure no padding */
 
 SC_MODULE(Bridge) { 

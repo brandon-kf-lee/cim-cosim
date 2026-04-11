@@ -5,6 +5,30 @@
 using namespace sc_core;
 using namespace tlm;
 
+static bool recv_all(int fd, void *buf, size_t len)
+{
+    uint8_t *p = (uint8_t*)buf;
+    while (len) {
+        ssize_t n = recv(fd, p, len, MSG_WAITALL);
+        if (n <= 0) return false;
+        p += n;
+        len -= (size_t)n;
+    }
+    return true;
+}
+
+static bool send_all(int fd, const void *buf, size_t len)
+{
+    const uint8_t *p = (const uint8_t*)buf;
+    while (len) {
+        ssize_t n = send(fd, p, len, 0);
+        if (n <= 0) return false;
+        p += n;
+        len -= (size_t)n;
+    }
+    return true;
+}
+
 void Bridge::run() {
     delay = sc_core::SC_ZERO_TIME;
 
@@ -23,32 +47,38 @@ void Bridge::run() {
     int client_fd = accept(server_fd, nullptr, nullptr);
     printf("[SystemC] Connected to QEMU\n");
 
+    /* 32-byte header, on stack. 16MB payload on heap */
+    bridge_msg msg;
+    uint8_t* payload = new uint8_t[DMA_BUFFER_SIZE];
+
     /* Server loop */
     while (true) {
-        bridge_msg msg{};
-        ssize_t n = recv(client_fd, &msg, sizeof(msg), 0);
-        
-        /* If no data received, connection closed */
-        if (n <= 0) {
+        /* Bridge message header */
+        if (!recv_all(client_fd, &msg, BRIDGE_HEADER_SIZE)) {
             fprintf(stderr, "[SystemC] Client disconnected\n");
-            break;  // or wait for new connection
+            break;
         }
 
-        /* Ensure DMA buffer size isn't exceeded */
-        if (msg.is_dma && msg.size > DMA_BUFFER_SIZE) {
-            fprintf(stderr, "[ERROR] DMA size %u exceeds DMA_BUFFER_SIZE %u\n",
-                    msg.size, (unsigned)DMA_BUFFER_SIZE);
-            msg.status = tlm::TLM_BURST_ERROR_RESPONSE;
+        /* Read payload only when present */
+        if (msg.size > 0) {
+            if (msg.size > DMA_BUFFER_SIZE) {
+                fprintf(stderr, "[ERROR] size %u exceeds limits\n", msg.size);
 
-            /* still fill in timing/irq below */
-            t_start = sc_core::sc_time_stamp();
-            t_end   = t_start;
-            t_delta = sc_core::SC_ZERO_TIME;
-            msg.simulated_ns = 0;
-            msg.ctrl_irq = irq.read();
-
-            send(client_fd, &msg, sizeof(msg), 0);
-            continue;  // go wait for next message
+                /* respond with error header only (no payload) */
+                msg.status = tlm::TLM_BURST_ERROR_RESPONSE;
+                msg.simulated_ns = 0;
+                msg.ctrl_irq = irq.read();
+                send_all(client_fd, &msg, BRIDGE_HEADER_SIZE);
+                continue;
+            }
+        
+            if (msg.is_write) {
+                /* For writes, payload comes from QEMU */
+                if (!recv_all(client_fd, payload, msg.size)) {
+                    fprintf(stderr, "[SystemC] Client disconnected during payload\n");
+                    break;
+                }
+            }
         }
         
         /* Mark time before controller does work */
@@ -57,9 +87,9 @@ void Bridge::run() {
         /* Control register write */
         if (msg.is_write && !msg.is_dma) {
             
-            // Take first 4 bytes of msg.data for the control data
+            // Take first 4 bytes of payload for the control data
             uint32_t ctrl = 0;
-            memcpy(&ctrl, msg.data, sizeof(ctrl));
+            memcpy(&ctrl, payload, sizeof(ctrl));
             msg.status = mmio_write(msg.addr, ctrl);
             
             if (msg.status != tlm::TLM_OK_RESPONSE) {
@@ -72,8 +102,8 @@ void Bridge::run() {
             uint32_t read_data;
             msg.status = mmio_read(msg.addr, read_data);
             
-            // Write read_data (control register value) into the first 4 bytes of msg.data
-            memcpy(msg.data, &read_data, sizeof(read_data));
+            // Write read_data (control register value) into the first 4 bytes of payload
+            memcpy(payload, &read_data, sizeof(read_data));
             
             if (msg.status != tlm::TLM_OK_RESPONSE) {
                 fprintf(stderr, "[ERROR] READ FAILED: addr=0x%lx, status=%d\n", msg.addr, msg.status);
@@ -82,7 +112,7 @@ void Bridge::run() {
 
         /* DMA block write */
         } else if (msg.is_write && msg.is_dma) {
-            msg.status = mmio_write_block(msg.addr, msg.data, msg.size);
+            msg.status = mmio_write_block(msg.addr, payload, msg.size);
 
             if (msg.status != tlm::TLM_OK_RESPONSE) {
                 printf("[ERROR] DMA WRITE FAILED: addr=0x%lx size=%d\n", msg.addr, msg.size);
@@ -91,7 +121,7 @@ void Bridge::run() {
         
         /* DMA block read */
         } else if (!msg.is_write && msg.is_dma) {
-            msg.status = mmio_read_block(msg.addr, msg.data, msg.size);
+            msg.status = mmio_read_block(msg.addr, payload, msg.size);
 
             if (msg.status != tlm::TLM_OK_RESPONSE) {
                 printf("[ERROR] DMA READ FAILED: addr=0x%lx size=%d\n", msg.addr, msg.size);
@@ -120,8 +150,22 @@ void Bridge::run() {
         /* Read memory controller's current IRQ state and forward to QEMU */ 
         msg.ctrl_irq = irq.read();
         
-        send(client_fd, &msg, sizeof(msg), 0);
+        /* send response header */
+        if (!send_all(client_fd, &msg, BRIDGE_HEADER_SIZE)) {
+            fprintf(stderr, "[SystemC] send failed\n");
+            break;
+        }
+
+        /* send payload only for reads with size>0 */
+        if (!msg.is_write && msg.size > 0) {
+            if (!send_all(client_fd, payload, msg.size)) {
+                fprintf(stderr, "[SystemC] send payload failed\n");
+                break;
+            }
+        }
     }
+    
+    delete[] payload;
 }
 
 // Helper function to write to mmio
