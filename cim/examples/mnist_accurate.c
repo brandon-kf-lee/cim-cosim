@@ -51,32 +51,22 @@ int main(int argc, char **argv)
         return 1;
 
     /* ---- load image(s)  ---- */
-    mnist_image_t single_img;
     mnist_dataset_t dataset;
     memset(&dataset, 0, sizeof(dataset));
 
-    if (opts.mode == MODE_SINGLE) {
-        if (read_exact_file(opts.path_image, &single_img, sizeof(single_img)) != 0)
-            return 1;
-    } else {
-        if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0)
-            return 1;
-    }
+    if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0)
+        return 1;
     
     float input_f[MNIST_IMAGE_SIZE];
     float activations[MNIST_LABELS];
     /* ---- Perform inference ---- */
     uint64_t correct = 0, total = 0;
     for (uint64_t it = 0; it < opts.iters; it++) {
-        const mnist_image_t *img = &single_img;
-        int label = -1;
-
-        // New image if looping through dataset
-        if (opts.mode == MODE_T10K) {
-            uint32_t idx = (uint32_t)(it % dataset.size);
-            img = &dataset.images[idx];
-            label = dataset.labels[idx];
-        }
+        
+        // Load image from dataset 
+        uint32_t idx = (uint32_t)(it % dataset.size);
+        const mnist_image_t *img = &dataset.images[idx];
+        int label = dataset.labels[idx];
 
         // Normalize image and compute 
         normalize_image_to_f32(img, input_f);
@@ -84,23 +74,18 @@ int main(int argc, char **argv)
         
         int pred = argmax_f32(activations, MNIST_LABELS);
 
+        // Increment correct predictions
+        total++;
+        if (pred == label) correct++;
+        
+        // Print out each image prediction on verbose
         if (opts.verbose) {
-            if (opts.mode == MODE_T10K) {
-                printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
-
-                // Increment total evaluated & correctness
-                total++;
-                if (pred == label) correct++;
-            } else { 
-                printf("it=%" PRIu64 " pred=%d\n", it, pred);
-            }
+            printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);
         }
     }
 
-    if (opts.verbose && opts.mode == MODE_T10K) {
-        printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
-               correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
-    }
+    printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
+           correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
 
     free_dataset(&dataset);
     return 0;
