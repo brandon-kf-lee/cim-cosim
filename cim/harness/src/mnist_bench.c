@@ -16,10 +16,9 @@ static void usage(const char *argv0)
     fprintf(stderr,
         "Usage: %s [options]\n\n"
         "Options:\n"
-        "  --mode single|t10k                (default: single)\n"
+        "  --section overhead|setup|total    (default: total)\n"
         "  --iters N                         (default: 1)\n"
         "  --warmup N                        (default: 0)  (not measured)\n"
-        "  --measure total|steady            (default: steady)\n"
         "  --network PATH                    (default: %s)\n"
         "  --image PATH                      (default: %s)  [single]\n"
         "  --t10k-images PATH                (default: %s)\n"
@@ -40,8 +39,7 @@ int mnist_bench_parse_args(mnist_bench_opts_t *opts, int argc, char **argv)
     opts->path_image      = MNIST_BENCH_DEFAULT_IMAGE_0;
     opts->path_t10k_images= MNIST_BENCH_DEFAULT_T10K_IMAGES;
     opts->path_t10k_labels= MNIST_BENCH_DEFAULT_T10K_LABELS;
-    opts->mode = MODE_SINGLE;
-    opts->meas = MEAS_STEADY;
+    opts->section = SEC_TOTAL;
     opts->iters = 1;
     opts->warmup = 0;
     opts->verbose = 0;
@@ -50,20 +48,16 @@ int mnist_bench_parse_args(mnist_bench_opts_t *opts, int argc, char **argv)
         if (streq(argv[i], "--help") || streq(argv[i], "-h")) {
             usage(argv[0]);
             return 2;
-        } else if (streq(argv[i], "--mode") && i + 1 < argc) {
-            const char *m = argv[++i];
-            if (streq(m, "single")) opts->mode = MODE_SINGLE;
-            else if (streq(m, "t10k")) opts->mode = MODE_T10K;
-            else { fprintf(stderr, "ERROR: unknown mode '%s'\n", m); return 2; }
         } else if (streq(argv[i], "--iters") && i + 1 < argc) {
             opts->iters = strtoull(argv[++i], NULL, 10);
         } else if (streq(argv[i], "--warmup") && i + 1 < argc) {
             opts->warmup = strtoull(argv[++i], NULL, 10);
-        } else if (streq(argv[i], "--measure") && i + 1 < argc) {
-            const char *m = argv[++i];
-            if (streq(m, "total")) opts->meas = MEAS_TOTAL;
-            else if (streq(m, "steady")) opts->meas = MEAS_STEADY;
-            else { fprintf(stderr, "ERROR: unknown measure '%s'\n", m); return 2; }
+        } else if (streq(argv[i], "--section") && i + 1 < argc) {
+            const char *s = argv[++i];
+            if (streq(s, "total")) opts->section = SEC_TOTAL;
+            else if (streq(s, "overhead")) opts->section = SEC_OVERHEAD;
+            else if (streq(s, "setup")) opts->section = SEC_SETUP;
+            else { fprintf(stderr, "ERROR: unknown section '%s'\n", s); return 2; }
         } else if (streq(argv[i], "--network") && i + 1 < argc) {
             opts->path_network = argv[++i];
         } else if (streq(argv[i], "--image") && i + 1 < argc) {
@@ -78,11 +72,6 @@ int mnist_bench_parse_args(mnist_bench_opts_t *opts, int argc, char **argv)
             fprintf(stderr, "ERROR: unknown/incomplete option '%s'\n", argv[i]);
             return 2;
         }
-    }
-
-    if (opts->iters == 0) {
-        fprintf(stderr, "ERROR: --iters must be > 0\n");
-        return 2;
     }
     return 0;
 }

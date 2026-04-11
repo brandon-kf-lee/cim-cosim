@@ -10,8 +10,7 @@
 #define MNIST_BENCH_DEFAULT_T10K_IMAGES "binaries/t10k-images-idx3-ubyte"
 #define MNIST_BENCH_DEFAULT_T10K_LABELS "binaries/t10k-labels-idx1-ubyte"
 
-typedef enum { MODE_SINGLE = 0, MODE_T10K = 1 } run_mode_t;
-typedef enum { MEAS_TOTAL = 0, MEAS_STEADY = 1 } meas_mode_t;
+typedef enum { SEC_TOTAL = 0, SEC_OVERHEAD, SEC_SETUP } section_t;
 
 typedef struct mnist_bench_opts_t {
     const char *path_network;
@@ -19,8 +18,7 @@ typedef struct mnist_bench_opts_t {
     const char *path_t10k_images;
     const char *path_t10k_labels;
 
-    run_mode_t mode;
-    meas_mode_t meas;
+    section_t section;
 
     uint64_t iters;
     uint64_t warmup;
