@@ -98,7 +98,8 @@ int main(int argc, char **argv)
         
         // Print out each image prediction on verbose
         if (opts.verbose) {
-            printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);        }
+            printf("it=%" PRIu64 " label=%d pred=%d\n", it, label, pred);        
+        }
     }
 
     printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",

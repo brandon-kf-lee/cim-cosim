@@ -98,7 +98,6 @@ int main(int argc, char **argv)
                                  INPUT_BASE_ADDR, OUTPUT_BASE_ADDR);
     if (rc != CIM_OK) goto out;    
 
-    /* TODO: can definitely be made more efficient, with less function call jumps */
     /* ---------------- Weight & Bias DMA Region ---------------- */
     rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network_q4->W, sizeof(network_q4->W));
     if (rc != CIM_OK) { fprintf(stderr, "DMA weights failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
@@ -172,7 +171,11 @@ int main(int argc, char **argv)
                correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
 out:
     free_dataset(&dataset);
-    cim_close(dev);
+    if (dev) cim_close(dev);
+
+    if (network_q4) free(network_q4);
+    if (input_q) free(input_q);
+    if (logits) free(logits);
 
     if (rc != CIM_OK) {
         fprintf(stderr, "ERROR: CIM failure: %s (%d)\n", cim_strerror(rc), rc);

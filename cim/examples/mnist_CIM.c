@@ -8,7 +8,6 @@
 #include "cim.h"
 #include "mnist.h"
 #include "mnist_bench.h"
-#include "perf_gate.h"
 
 #include <errno.h>
 #include <inttypes.h>
