@@ -9,7 +9,7 @@
 #include "tlm_utils/simple_target_socket.h"
 
 #include "include/mem_controller_registers.h"
-#include "include/mnist_network.h"
+#include "include/neural_network.h"
 #include "include/timing_params.h"
 
 SC_MODULE(Sram)

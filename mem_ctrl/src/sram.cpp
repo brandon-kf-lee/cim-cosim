@@ -98,17 +98,17 @@ void Sram::b_transport(tlm_generic_payload &trans, sc_time &delay)
 /**
  * compute_in_memory(): 4b/4b FC (fully connected) inference with tile-based timing
  * Based on digital SRAM CIM macro developed by You et al. (2024)
- *  - weights: 4 bit (stored in int8) values (expected in [-8,7]) at WEIGHT_BASE_ADDR, layout [label][pixel]
- *  - bias:    4 byte (int32) at BIAS_BASE_ADDR, length MNIST_LABELS
- *  - input:   4 bit (stored in int8) values (expected in [-8,7]) at INPUT_BASE_ADDR, length MNIST_IMAGE_SIZE
- *  - output:  4 byte (int32) at OUTPUT_BASE_ADDR, length MNIST_LABELS
+ *  - weights: 4 bit (stored in int8) values (expected in [-8,7]) at WEIGHT_BASE_ADDR, layout [label][in]
+ *  - bias:    4 byte (int32) at BIAS_BASE_ADDR, length NN_OUT_SIZE
+ *  - input:   4 bit (stored in int8) values (expected in [-8,7]) at INPUT_BASE_ADDR, length NN_IN_SIZE
+ *  - output:  4 byte (int32) at OUTPUT_BASE_ADDR, length NN_OUT_SIZE
  *
  * Functional model:
  *   y[i] = b[i] + sum_j x[j] * W[i][j]
  *
  * Tiling model (macro size 64x64):
- *  - Single MNIST doesn't fit on the the 64x64 macro, so must be split into "tiles"
- *  - 64-wide tiles like a 64x64 macro => 13 tiles
+ *  - Input may not fit in the 64x64 macro, so must be split into "tiles"
+ *  - 64-wide tiles with a 784 input size => 13 tiles
  *
  * Timing model
  *   - multi-bit MAC requires ~M clock cycles per set of operations on average, where M = input bitwidth
@@ -121,40 +121,38 @@ void Sram::b_transport(tlm_generic_payload &trans, sc_time &delay)
 void Sram::compute_in_memory(sc_core::sc_time &delay)
 {
     // Basic safety: ensure regions do not overlap SRAM end
-    const uint32_t w_end = WEIGHT_BASE_ADDR + WEIGHT_SIZE;
-    const uint32_t b_end = BIAS_BASE_ADDR   + BIAS_SIZE;
-    const uint32_t x_end = INPUT_BASE_ADDR  + INPUT_SIZE;
     const uint32_t y_end = OUTPUT_BASE_ADDR + OUTPUT_SIZE;
-
     if (y_end > SRAM_SIZE) {
         SC_REPORT_ERROR("SRAM", "CIM regions exceed SRAM_SIZE");
         return;
     }
 
-    // Derive number of tiles for 64-wide macro mapping
-    const int tiles = (MNIST_IMAGE_SIZE + timing::TILE_W - 1) / timing::TILE_W; // 13 tiles for 784 pixels and 64x64 macro size
+    // Tiling math: A 64x64 macro processes tiles in both in (x) and out (y) dimentions
+    const int tiles_in = (NN_IN_SIZE + timing::TILE_W - 1) / timing::TILE_W;
+    const int tiles_out = (NN_OUT_SIZE + timing::TILE_W - 1) / timing::TILE_W;
+    const int total_tiles = tiles_in * tiles_out;
 
     // Typed pointers into/from the SRAM backing store
     int8_t  *W = reinterpret_cast<int8_t*>(&mem[WEIGHT_BASE_ADDR]);
     int32_t *b = reinterpret_cast<int32_t*>(&mem[BIAS_BASE_ADDR]);
-    uint8_t  *x = reinterpret_cast<uint8_t*>(&mem[INPUT_BASE_ADDR]);
+    uint8_t *x = reinterpret_cast<uint8_t*>(&mem[INPUT_BASE_ADDR]);
     int32_t *y = reinterpret_cast<int32_t*>(&mem[OUTPUT_BASE_ADDR]);
 
     // ---- Functional computation (tiled dot products) ----
-    for (int i = 0; i < MNIST_LABELS; i++) {
+    for (int i = 0; i < NN_OUT_SIZE; i++) {
         // Start with bias for this output neuron/class
         int32_t acc = b[i];
 
         // Accumulate in tiles of 64 inputs to reflect 64-wide CIM macro mapping
-        for (int t = 0; t < tiles; t++) {
+        for (int t = 0; t < tiles_in; t++) {
             const int base = t * timing::TILE_W;
-            const int end  = std::min((base + (int)timing::TILE_W), (int)MNIST_IMAGE_SIZE);
+            const int end  = std::min((base + (int)timing::TILE_W), (int)NN_IN_SIZE);
 
             // Dot-product chunk: x[base:end] · W[i][base:end]
             for (int j = base; j < end; j++) {
                 // Enforce signed-4b semantics even though stored as int8
                 const uint8_t xv = clamp_u4((int)x[j]);
-                const int8_t wv = clamp_s4((int)W[i * MNIST_IMAGE_SIZE + j]);
+                const int8_t wv = clamp_s4((int)W[i * NN_IN_SIZE + j]);
 
                 // Multiply-accumulate into 32-bit accumulator
                 acc += (int32_t)xv * (int32_t)wv;
@@ -164,5 +162,6 @@ void Sram::compute_in_memory(sc_core::sc_time &delay)
         y[i] = acc;
     }
 
-    delay += timing::cim_time(tiles);
+    // Apply the 2D tiling delay for the total simulated time
+    delay += timing::cim_time(total_tiles);
 }

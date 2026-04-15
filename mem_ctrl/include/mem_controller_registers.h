@@ -3,7 +3,7 @@
 #ifndef MEM_CONTROLLER_REGISTERS_H
 #define MEM_CONTROLLER_REGISTERS_H
 
-#include "mnist_network.h"
+#include "neural_network.h"
 #include <stdint.h>
 
 // Detect host architecture automatically, but allow manual override
@@ -46,7 +46,7 @@ static constexpr uint32_t STAT_DONE = 1u << 1;  // b0010, 0x02
 static constexpr uint32_t STAT_ERR  = 1u << 2;  // b0100, 0x04
 
 // SRAM Size
-static constexpr uint32_t SRAM_SIZE = 262144; // 256KB SRAM
+static constexpr uint32_t SRAM_SIZE = 4194304; // 4MB
 
 // SRAM Memory Layout (CIM Data Regions)
 // SRAM addresses are abstracted away for now, may not represent where the data (weights, input) should be stored in a real CIM system
@@ -54,18 +54,18 @@ static constexpr uint32_t SRAM_SIZE = 262144; // 256KB SRAM
 #define CIM_DATA_REGION  0x00001000   // Marker for the start of CIM data section
 
 #define WEIGHT_BASE_ADDR 0x00001000
-#define WEIGHT_SIZE      (MNIST_LABELS * MNIST_IMAGE_SIZE)          // 7840 (4 bits in a 1 byte holder weight)
+#define WEIGHT_SIZE      (NN_OUT_SIZE * NN_IN_SIZE)
 
-#define BIAS_BASE_ADDR   (WEIGHT_BASE_ADDR + WEIGHT_SIZE)           // +7840
-#define BIAS_SIZE        (MNIST_LABELS * sizeof(int32_t))           // 40 (4 byte bias)
+#define BIAS_BASE_ADDR   (WEIGHT_BASE_ADDR + WEIGHT_SIZE)           
+#define BIAS_SIZE        (NN_OUT_SIZE * sizeof(int32_t))           
 
-#define INPUT_BASE_ADDR  (BIAS_BASE_ADDR + BIAS_SIZE)               // +40
-#define INPUT_SIZE       (MNIST_IMAGE_SIZE)                         // 784 (4 bits in a 1 byte holder input)
+#define INPUT_BASE_ADDR  (BIAS_BASE_ADDR + BIAS_SIZE)               
+#define INPUT_SIZE       (NN_IN_SIZE)                         
 
-#define OUTPUT_BASE_ADDR (INPUT_BASE_ADDR + INPUT_SIZE)             // +784
-#define OUTPUT_SIZE      (MNIST_LABELS * sizeof(int32_t))           // 40 (4 byte output)
+#define OUTPUT_BASE_ADDR (INPUT_BASE_ADDR + INPUT_SIZE)             
+#define OUTPUT_SIZE      (NN_OUT_SIZE * sizeof(int32_t))
 
-#define SRAM_COMPUTE_CMD 0xFFFFFFFF                                 // Special address to signal compute execution
+#define SRAM_COMPUTE_CMD 0xFFFFFFFF  // Special address to signal compute execution
 
 
 #endif // MEM_CONTROLLER_REGISTERS_H
