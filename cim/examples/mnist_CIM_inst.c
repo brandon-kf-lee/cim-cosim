@@ -159,7 +159,7 @@ int main(int argc, char **argv)
 
     /* ---- calculate deltas and print (outside measurement) ---- */
     printf("instret: setup instructions=     %" PRIu64 "\n", setup_end - setup_start);
-    printf("%" PRIu64 "\n", infr_end - infr_start);
+    printf("instret: inference instructions= %" PRIu64 "\n", infr_end - infr_start);
 
     printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
                correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
