@@ -342,6 +342,10 @@ static int sc_dev_probe(struct platform_device *pdev)
 
 	dev_info(&pdev->dev, "probed, /dev/%s, /dev/%s, and /dev/%s ready\n",
 		 dev->misc_dma.name, dev->misc_ctrl.name, dev->misc_job.name);
+
+	/* Enable user-mode reading of instret (retired instruction count profiling) */
+	__asm__ volatile("csrs scounteren, %0" :: "r"(5));
+
 	return 0;
 
 err_misc:
