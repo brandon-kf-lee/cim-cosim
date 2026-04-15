@@ -46,6 +46,7 @@ int main(int argc, char **argv)
     uint8_t *input_q = NULL;            // Quantized image input
     int32_t *logits  = NULL;            // Raw output
     uint64_t input_q_phys, logits_phys; // Physical addresses
+    float k[MNIST_LABELS];              // Dequantization scaling factors
 
     // Align allocated memory to page size
     if (posix_memalign((void **)&input_q, 4096, MNIST_IMAGE_SIZE) != 0 || !input_q) {
@@ -70,41 +71,52 @@ int main(int argc, char **argv)
     }
 
     /* ---------------- Inference Setup ---------------- */
-    // CIM Init
-    cim_config_t cfg = {0};
-    cfg.dma_mode = CIM_DMA_PAGED;
-    cfg.debug = 0;
+    
+    // Amplify setup region only if profiling the setup section.
+    // Otherwise, just do the setup 1 time so the program can continue to inference.
+    int setup_iterations = (opts.section == SEC_SETUP) ? 10000 : 1;
 
-    rc = cim_init(&dev, &cfg);
-    if (rc != CIM_OK) {
-        fprintf(stderr, "cim_init failed: %s (%d)\n", cim_strerror(rc), rc);
-        free_dataset(&dataset);
-        return 1;
-    }
+    for(int dup = 0; dup < setup_iterations; ++dup) {
+        // CIM Init
+        cim_config_t cfg = {0};
+        cfg.dma_mode = CIM_DMA_PAGED;
+        cfg.debug = 0;
 
-    // Convert image's virtual address to physical 
-    rc = io_virt_to_phys(dev, input_q, logits, &input_q_phys, &logits_phys);
-    if (rc != CIM_OK) goto out;
+        rc = cim_init(&dev, &cfg);
+        if (rc != CIM_OK) {
+            fprintf(stderr, "cim_init failed: %s (%d)\n", cim_strerror(rc), rc);
+            free_dataset(&dataset);
+            return 1;
+        }
 
-    // Pre-configure input & output locations, since it doesn't change between inferences
-    rc = cim_configure_inference(dev,
-                                 input_q_phys, MNIST_IMAGE_SIZE,
-                                 logits_phys, sizeof(int32_t) * MNIST_LABELS,
-                                 INPUT_BASE_ADDR, OUTPUT_BASE_ADDR);
-    if (rc != CIM_OK) goto out;    
+        // Convert image's virtual address to physical 
+        rc = io_virt_to_phys(dev, input_q, logits, &input_q_phys, &logits_phys);
+        if (rc != CIM_OK) goto out;
 
-    /* ---------------- Weight & Bias DMA Region ---------------- */
-    rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network_q4->W, sizeof(network_q4->W));
-    if (rc != CIM_OK) { fprintf(stderr, "DMA weights failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
+        // Pre-configure input & output locations, since it doesn't change between inferences
+        rc = cim_configure_inference(dev,
+                                    input_q_phys, MNIST_IMAGE_SIZE,
+                                    logits_phys, sizeof(int32_t) * MNIST_LABELS,
+                                    INPUT_BASE_ADDR, OUTPUT_BASE_ADDR);
+        if (rc != CIM_OK) goto out;    
 
-    rc = cim_dma_write_sram(dev, BIAS_BASE_ADDR, network_q4->b, sizeof(network_q4->b));
-    if (rc != CIM_OK) { fprintf(stderr, "DMA bias failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
+        /* ---------------- Weight & Bias DMA Region ---------------- */
+        rc = cim_dma_write_sram(dev, WEIGHT_BASE_ADDR, network_q4->W, sizeof(network_q4->W));
+        if (rc != CIM_OK) { fprintf(stderr, "DMA weights failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
 
-    /* Pre-compute dequantization scaling factors (reduces work done in main loop)
-       Necessary for comparable scores with per-class w_scale */
-    float k[MNIST_LABELS];
-    for (int i = 0; i < MNIST_LABELS; i++) {
-        k[i] = network_q4->x_scale * network_q4->w_scale[i];
+        rc = cim_dma_write_sram(dev, BIAS_BASE_ADDR, network_q4->b, sizeof(network_q4->b));
+        if (rc != CIM_OK) { fprintf(stderr, "DMA bias failed: %s (%d)\n", cim_strerror(rc), rc); goto out; }
+
+        /* Pre-compute dequantization scaling factors (reduces work done in main loop)
+        Necessary for comparable scores with per-class w_scale */
+        for (int i = 0; i < MNIST_LABELS; i++) {
+            k[i] = network_q4->x_scale * network_q4->w_scale[i];
+        }
+
+        if (opts.section == SEC_SETUP) {
+            cim_close(dev);
+            dev = NULL; // Set to NULL so the cleanup block at the very end doesn't double-free it
+        }
     }
 
     // End of setup section

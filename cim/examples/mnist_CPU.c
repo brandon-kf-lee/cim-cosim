@@ -49,6 +49,7 @@ int main(int argc, char **argv)
     // Prep Input & Output Variables
     uint8_t input_q[MNIST_IMAGE_SIZE];   // Quantized MNIST input image    
     int32_t acc[MNIST_LABELS];           // Activations
+    float k[MNIST_LABELS];               // Dequantization scaling factors
 
     // End of overhead section
     if (opts.section == SEC_OVERHEAD) {
@@ -56,11 +57,16 @@ int main(int argc, char **argv)
     }
 
     /* ---------------- Inference Setup ---------------- */
-    /* Pre-compute dequantization scaling factors (reduces work done in main loop)
-       Necessary for comparable scores with per-class w_scale */
-    float k[MNIST_LABELS];
-    for (int i = 0; i < MNIST_LABELS; i++) {
-        k[i] = network_q4.x_scale * network_q4.w_scale[i];
+    // Amplify setup region only if profiling the setup section.
+    // Otherwise, just do the setup 1 time so the program can continue to inference.
+    int setup_iterations = (opts.section == SEC_SETUP) ? 10000 : 1;
+
+    for(int dup = 0; dup < setup_iterations; ++dup) {        
+        /* Pre-compute dequantization scaling factors (reduces work done in main loop)
+           Necessary for comparable scores with per-class w_scale */
+        for (int i = 0; i < MNIST_LABELS; i++) {
+            k[i] = network_q4.x_scale * network_q4.w_scale[i];
+        }
     }
 
     // End of setup section
