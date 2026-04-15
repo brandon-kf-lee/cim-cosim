@@ -48,6 +48,33 @@ static int read_u64(int fd, uint64_t *out)
     return 0;
 }
 
+int instret_init()
+{
+    struct perf_event_attr pe;
+    memset(&pe, 0, sizeof(pe));
+    pe.type = PERF_TYPE_HARDWARE;
+    pe.size = sizeof(struct perf_event_attr);   /* Should be 136 from perf stat -vv */
+    pe.config = PERF_COUNT_HW_INSTRUCTIONS;
+
+    pe.disabled = 0;        /* start enabled */
+    pe.inherit = 0;         /* do not count child tasks */
+    pe.enable_on_exec = 0;  /* do not auto-enable at exec; benchmark controls gating */
+
+    /*
+     * IMPORTANT:
+     * We intentionally do NOT set exclude_kernel/exclude_user.
+     * This counts both user + kernel instructions.
+     */
+
+    int ret = (int)perf_event_open_(&pe, 0, -1, -1, PERF_FLAG_FD_CLOEXEC);
+    if (ret == -1) {
+        perror("perf_event_open instructions");
+        return -1;
+    }
+
+    return 0;
+}
+
 int perf_gate_init(perf_gate_t *pg)
 {
     if (!pg) { errno = EINVAL; return -1; }

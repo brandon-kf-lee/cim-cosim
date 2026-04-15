@@ -15,6 +15,10 @@ typedef struct perf_gate {
 /* Initialize perf counters (disabled). Returns 0 on success, -1 on error (errno set). */
 int perf_gate_init(perf_gate_t *pg);
 
+/* Initialize PMU to report retired instructions to instret. 
+   Lighter form of perf monitoring that only monitors instruction count */
+int instret_init();
+
 /* Close fds and clear struct. Safe to call on partially-initialized pg. */
 void perf_gate_close(perf_gate_t *pg);
 

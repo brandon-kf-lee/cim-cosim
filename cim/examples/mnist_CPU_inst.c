@@ -1,6 +1,6 @@
 /*
  * mnist_CPU_inst.c - MNIST inference using ONLY CPU calculations (INT4/INT4 path)
- * with perf_event_open gating (instructions) around chosen regions.
+ * with instret (RISC-V instructions retired) gating around chosen regions.
  *
  */
 
@@ -51,27 +51,28 @@ int main(int argc, char **argv)
     // Prep Input & Output Variables
     uint8_t input_q[MNIST_IMAGE_SIZE];   // Quantized MNIST input image    
     int32_t acc[MNIST_LABELS];           // Activations
+    float k[MNIST_LABELS];               // Dequantization scaling factors
 
-    /* ---------------- Perf Setup ---------------- */
-    perf_gate_t pg_setup, pg_infr;
-    if (perf_gate_init(&pg_setup) != 0) die_errno("perf_gate_init (check perf_event permissions)");
-    if (perf_gate_init(&pg_infr) != 0) die_errno("perf_gate_init (check perf_event permissions)");
+    /* ---------------- instret Setup ---------------- */
+    // Using lighter instret reading to reduce noise when enabling/disabling perf gates
+    uint64_t setup_start, setup_end;
+    uint64_t infr_start, infr_end;
 
+    if (instret_init() != 0) die_errno("instret_init");
 
     /* ---------------- Inference Setup ---------------- */
-    if (perf_gate_reset_enable(&pg_setup) != 0) die_errno("perf_gate_reset_enable");
+    __asm__ volatile("csrr %0, instret" : "=r"(setup_start));
 
     /* Pre-compute dequantization scaling factors (reduces work done in main loop)
        Necessary for comparable scores with per-class w_scale */
-    float k[MNIST_LABELS];
     for (int i = 0; i < MNIST_LABELS; i++) {
         k[i] = network_q4.x_scale * network_q4.w_scale[i];
     }
 
-    if (perf_gate_disable(&pg_setup) != 0) die_errno("perf_gate_disable");
+    __asm__ volatile("csrr %0, instret" : "=r"(setup_end));
 
     /* ---------------- Inference Region ---------------- */
-    if (perf_gate_reset_enable(&pg_infr) != 0) die_errno("perf_gate_reset_enable");
+    __asm__ volatile("csrr %0, instret" : "=r"(infr_start));
 
     // Accuracy metrics
     uint64_t correct = 0, total = 0;
@@ -106,18 +107,12 @@ int main(int argc, char **argv)
         }
     }
 
-    if (perf_gate_disable(&pg_infr) != 0) die_errno("perf_gate_disable");
+    __asm__ volatile("csrr %0, instret" : "=r"(infr_end));
 
 
     /* ---- read counters and print (outside measurement) ---- */
-    uint64_t setup_instr, infr_instr = 0;
-    if (perf_gate_read(&pg_setup, &setup_instr) != 0) die_errno("perf_gate_read");
-    if (perf_gate_read(&pg_infr, &infr_instr) != 0) die_errno("perf_gate_read");
-
-    printf("perf: setup instructions=     %" PRIu64 "\n", setup_instr);
-    printf("perf: inference instructions= %" PRIu64 "\n", infr_instr);
-
-    //printf("perf: instructions/iter=%.2f\n", (double)instr / (double)opts.iters);
+    printf("instret: setup instructions=     %" PRIu64 "\n", setup_end - setup_start);
+    printf("instret: inference instructions= %" PRIu64 "\n", infr_end - infr_start);
 
     printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
            correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
