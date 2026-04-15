@@ -23,12 +23,12 @@ core #, data accesses, data misses, dmiss rate, insn accesses, insn misses, imis
 Compute:
 - Representative stats (median) for each test group.
 - Overhead-only:           (overhead - base)
-- Setup-only:              (setup - overhead)  [excludes "simulation overhead"]
-- Inference-only total:    (total - setup)
-- Inference-only per-iter: (total - setup) / iters
+- Setup-only (1x):         (setup - overhead) / setup_iters
+- Inference-only total:    (total - overhead - setup_1x)
+- Inference-only per-iter: inference_only / iters
 
 Usage:
-  python3 analyze_cache.py --results ./results --iters 1000
+  python3 analyze_cache.py --results ./results --iters 1000 --setup-iters 10000
 """
 
 from __future__ import annotations
@@ -114,12 +114,6 @@ def median_counters(cs: List[Counters]) -> Counters:
     return Counters(dacc, dmiss, dmiss_rate_pct, iacc, imiss, imiss_rate_pct)
 
 
-# def fmt(c: Counters) -> str:
-#     return (
-#         f"Dacc={c.dacc:,} Dmiss={c.dmiss:,} Dmiss%={c.dmiss_rate_pct:.4f} | "
-#         f"Iacc={c.iacc:,} Imiss={c.imiss:,} Imiss%={c.imiss_rate_pct:.4f}"
-#     )
-
 def fmt_counts(c: Counters) -> str:
     # fixed width columns; commas kept for readability
     return (
@@ -143,10 +137,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default="./results", help="directory containing run_*.log files")
     ap.add_argument("--iters", type=int, default=1000, help="number of inferences in *total* runs")
+    ap.add_argument("--setup-iters", type=int, default=10000, help="number of setup loops in *setup* runs")
     args = ap.parse_args()
 
     results_dir = args.results
     iters = args.iters
+    setup_iters = args.setup_iters
 
     groups = {
         "base": load_group(results_dir, "run_base"),
@@ -180,20 +176,23 @@ def main() -> None:
 
     print("\n=== How metrics are derived, using median of each group ===")
     print(f"overhead-only  = (overhead - base)")
-    print(f"setup-only     = (setup - overhead)")
-    print(f"inference-only = (total - setup)")
-    print(f"inference/iter = ((total - setup)/{iters})")
+    print(f"setup-only     = (setup - overhead) / {setup_iters}")
+    print(f"inference-only = (total - overhead - setup-only)")
+    print(f"inference/iter = (inference-only / {iters})")
 
     base = rep["base"]["median"]
 
     # ------------ CIM section deltas (using median) ------------
     cim_oh = rep["cim_overhead"]["median"]
-    cim_setup = rep["cim_setup"]["median"]
+    cim_setup_raw = rep["cim_setup"]["median"]
     cim_total = rep["cim_total"]["median"]
 
     cim_overhead_only = cim_oh - base
-    cim_setup_only = cim_setup - cim_oh
-    cim_infer_total = cim_total - cim_setup
+    cim_setup_amplified = cim_setup_raw - cim_oh
+    cim_setup_only = cim_setup_amplified.div(setup_iters)  # Divide out the amplification
+    
+    # Total run has 1 setup iteration, so subtract overhead and 1 setup.
+    cim_infer_total = (cim_total - cim_oh) - cim_setup_only
     cim_infer_per_iter = cim_infer_total.div(iters)
 
     print("\n=== CIM derived metrics (using median of each group) ===")
@@ -204,12 +203,15 @@ def main() -> None:
 
     # ------------ CPU section deltas (using median) ------------
     cpu_oh = rep["cpu_overhead"]["median"]
-    cpu_setup = rep["cpu_setup"]["median"]
+    cpu_setup_raw = rep["cpu_setup"]["median"]
     cpu_total = rep["cpu_total"]["median"]
 
     cpu_overhead_only = cpu_oh - base
-    cpu_setup_only = cpu_setup - cpu_oh
-    cpu_infer_total = cpu_total - cpu_setup
+    cpu_setup_amplified = cpu_setup_raw - cpu_oh
+    cpu_setup_only = cpu_setup_amplified.div(setup_iters) # Divide out the amplification!
+    
+    # Total run has 1 setup iteration. So subtract overhead and 1 setup.
+    cpu_infer_total = (cpu_total - cpu_oh) - cpu_setup_only
     cpu_infer_per_iter = cpu_infer_total.div(iters)
 
     print("\n=== CPU derived metrics (using median of each group) ===")

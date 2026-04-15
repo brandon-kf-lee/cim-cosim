@@ -2,48 +2,48 @@ sc_dev: connected to SystemC at /tmp/systemc.sock
 sc_dev: DMA intialized
 sc_dev: IRQ lines intialized
 core #, data accesses, data misses, dmiss rate, insn accesses, insn misses, imiss rate
-0       291271104      2304899         0.7913%  1293635009     3000679         0.2320%
+0       290475602      2285527         0.7868%  1291657302     2876282         0.2227%
 
 address, data misses, instruction
-0x7f7cb4127bf4, 416188, ld                      a4,0(s7)
-0x7f7cb4127bee, 134769, ld                      s7,0(s8)
-0x7f7cb4b5d51c, 101350, sd                      a1,192(t0)
-0x7f7cb4b5d4bc, 98378, sd                      a1,0(t0)
-0x7f7cb4b5d4dc, 98117, sd                      a1,64(t0)
-0x7f7cb4b5d4fc, 97538, sd                      a1,128(t0)
-0x7f7cb4c157f6, 32768, sw                      a5,52(a0)
-0x7f7cb423f70e, 31631, sd                      s2,0(s3)
-0x7f7cb4b5d6e0, 25016, ld                      t1,0(t0)
-0x7f7cb4c19a06, 20727, ld                      a6,0(a5)
-0x7f7cb42333f4, 18454, ld                      a5,0(s3)
-0x7f7cb4082e9e, 16385, lr.w                    a1,(a0)
-0x7f7cb41c72a4, 14809, ld                      a4,8(a0)
-0x7f7cb430637a, 14495, lw                      a5,32(s1)
-0x7f7cb4b5d708, 13538, ld                      t1,8(t0)
-0x7f7cb4c15cbe, 12037, ld                      a4,0(a5)
-0x7f7cb4b5d658, 11429, ld                      t0,0(a0)
-0x7f7cb4b3da7c, 11400, ld                      a0,0(s1)
-0x7f7cb40c417c, 11155, sd                      a5,560(s1)
-0x7f7cb4244024, 10993, ld                      a3,0(a5)
+0x7fa398127bf4, 416125, ld                      a4,0(s7)
+0x7fa398127bee, 134506, ld                      s7,0(s8)
+0x7fa398b5d51c, 101570, sd                      a1,192(t0)
+0x7fa398b5d4bc, 98174, sd                      a1,0(t0)
+0x7fa398b5d4dc, 98052, sd                      a1,64(t0)
+0x7fa398b5d4fc, 97740, sd                      a1,128(t0)
+0x7fa398c157f6, 32768, sw                      a5,52(a0)
+0x7fa39823f70e, 31646, sd                      s2,0(s3)
+0x7fa398b5d6e0, 24831, ld                      t1,0(t0)
+0x7fa398c19a06, 20727, ld                      a6,0(a5)
+0x7fa3982333f4, 18454, ld                      a5,0(s3)
+0x7fa398082e9e, 16567, lr.w                    a1,(a0)
+0x7fa3981c72a4, 14809, ld                      a4,8(a0)
+0x7fa39830637a, 14452, lw                      a5,32(s1)
+0x7fa398b5d708, 13180, ld                      t1,8(t0)
+0x7fa398c15cbe, 12037, ld                      a4,0(a5)
+0x7fa398b5d658, 11580, ld                      t0,0(a0)
+0x7fa398b3da7c, 11564, ld                      a0,0(s1)
+0x7fa3980c417c, 11310, sd                      a5,560(s1)
+0x7fa398244024, 11071, ld                      a3,0(a5)
 
 address, fetch misses, instruction
-0x7f7cb4b4fb68, 20574, addi                    sp,sp,-16
-0x7f7cb4073b24, 20322, lbu                     a5,81(a2)
-0x7f7cb4065ba0, 20098, addi                    sp,sp,-64
-0x7f7cb4b4fb96, 19836, andi                    a0,a4,-4
-0x7f7cb4073b42, 19773, bltz                    a5,70                   # 0xffffffff80073b88
-0x7f7cb4075482, 19634, and                     s2,a4,s2
-0x7f7cb40654c0, 19626, sd                      ra,72(sp)
-0x7f7cb40754f2, 19574, ld                      ra,40(sp)
-0x7f7cb4073b8e, 19447, addi                    t1,zero,1023
-0x7f7cb40654bc, 19197, addi                    sp,sp,-80
-0x7f7cb407cf40, 19112, ld                      ra,8(sp)
-0x7f7cb4b694c0, 19097, ld                      tp,32(sp)
-0x7f7cb4b5db80, 19089, ld                      ra,40(sp)
-0x7f7cb4b6949a, 19028, ld                      s0,256(sp)
-0x7f7cb48f5480, 18994, add                     a0,a0,a5
-0x7f7cb40c5b9a, 18886, ld                      a4,288(s1)
-0x7f7cb4b5db1c, 18838, addi                    sp,sp,-48
-0x7f7cb40cfb00, 18798, bgez                    a5,-110                 # 0xffffffff800cfa92
-0x7f7cb405cf58, 18773, lui                     a5,1
-0x7f7cb4b5e700, 18731, addi                    sp,sp,32
+0x7fa398b4fb68, 20608, addi                    sp,sp,-16
+0x7fa398073b24, 20359, lbu                     a5,81(a2)
+0x7fa398065ba0, 20117, addi                    sp,sp,-64
+0x7fa398b4fb96, 19876, andi                    a0,a4,-4
+0x7fa398073b42, 19765, bltz                    a5,70                   # 0xffffffff80073b88
+0x7fa398073b8e, 19478, addi                    t1,zero,1023
+0x7fa398b5db80, 19159, ld                      ra,40(sp)
+0x7fa39807cf40, 19149, ld                      ra,8(sp)
+0x7fa3980654c0, 19105, sd                      ra,72(sp)
+0x7fa398b694c0, 19055, ld                      tp,32(sp)
+0x7fa3980c5b9a, 18936, ld                      a4,288(s1)
+0x7fa398b5db1c, 18858, addi                    sp,sp,-48
+0x7fa39805cf58, 18818, lui                     a5,1
+0x7fa3980cfb00, 18818, bgez                    a5,-110                 # 0xffffffff800cfa92
+0x7fa398b5e700, 18797, addi                    sp,sp,32
+0x7fa398062730, 18786, ld                      a3,1080(a1)
+0x7fa398068730, 18769, addi                    sp,sp,-64
+0x7fa3980c5b40, 18749, lw                      a5,1776(a5)
+0x7fa3980d8728, 18718, addi                    sp,sp,-16
+0x7fa3980c5b00, 18691, sd                      a5,544(s1)
