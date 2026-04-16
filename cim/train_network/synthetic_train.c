@@ -5,7 +5,7 @@
  */ 
 
 // Force the large network macros for this generator
-#define USE_LARGE_NETWORK 1
+#define USE_SYNTHETIC_NETWORK 1
 
 #include "include/mnist_file.h"
 #include "include/neural_network.h"

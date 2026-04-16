@@ -7,6 +7,8 @@
 #include "include/mnist_file.h"
 #include "include/neural_network.h"
 
+// Force the large network macros for this generator
+#define USE_SYNTHETIC_NETWORK 1
 #define STEPS 1000
 #define BATCH_SIZE 100
 

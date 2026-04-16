@@ -16,8 +16,6 @@
 // 0 = MNIST (784 x 10)
 // 1 = Large Synthetic NN (1024 x 1024)
 // ==========================================
-#define USE_SYNTHETIC_NETWORK 0
-
 #if USE_SYNTHETIC_NETWORK
     #define NN_IN_SIZE 1024
     #define NN_OUT_SIZE 1024
