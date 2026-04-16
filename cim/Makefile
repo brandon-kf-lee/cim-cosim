@@ -20,7 +20,7 @@ TN_INC    := -I$(TN_DIR)/include
 # Main project include path (not for use with TN tools)
 PROJ_INC  := -I$(INC_DIR)
 
-.PHONY: all clean models train quantize_q4 clean_models \
+.PHONY: all clean models train quantize_q4 clean_models synthetic \
         # TODO targets:
         # lib examples harness
 
@@ -50,6 +50,9 @@ $(BUILD_DIR)/mnist_train: $(TN_DIR)/mnist_train.c $(TN_COMMON_SRCS) | $(BUILD_DI
 $(BUILD_DIR)/quantize_network_q4: $(TN_DIR)/quantize_network.c $(TN_COMMON_SRCS) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(TN_INC) $^ -o $@ -lm
 
+$(BUILD_DIR)/synthetic_train: $(TN_DIR)/synthetic_train.c $(TN_COMMON_SRCS) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(TN_INC) $^ -o $@ -lm		
+
 # Run training to produce float model
 # Assumes mnist_train.c writes: binaries/mnist_network.bin
 train: $(BUILD_DIR)/mnist_train | $(BIN_DIR)
@@ -60,7 +63,11 @@ train: $(BUILD_DIR)/mnist_train | $(BIN_DIR)
 quantize_q4: $(BUILD_DIR)/quantize_network_q4 | $(BIN_DIR)
 	$(BUILD_DIR)/quantize_network_q4 $(BIN_DIR)/mnist_network.bin $(BIN_DIR)/mnist_network_q4.bin
 
-models: train quantize_q4
+# Create synthetic model
+synthetic: $(BUILD_DIR)/synthetic_train | $(BIN_DIR)
+	$(BUILD_DIR)/synthetic_train
+
+models: train quantize_q4 synthetic
 
 # ------------------------------------------------------------
 # TODO: integrate these into Makefile (currently in deploy script)

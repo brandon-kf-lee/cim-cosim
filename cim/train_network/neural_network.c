@@ -13,6 +13,9 @@
 // Returns a random value between 0 and 1
 #define RAND_FLOAT() (((float) rand()) / ((float) RAND_MAX))
 
+// Returns a random value signed 8 bit value
+#define RAND_8b() (((int8_t) rand()) / ((int8_t) RAND_MAX))
+
 /**
  * Initialise the weights and bias vectors with values between 0 and 1
  */
@@ -20,11 +23,30 @@ void neural_network_random_weights(neural_network_t * network)
 {
     int i, j;
 
-    for (i = 0; i < MNIST_LABELS; i++) {
+    for (i = 0; i < NN_OUT_SIZE; i++) {
         network->b[i] = RAND_FLOAT();
 
-        for (j = 0; j < MNIST_IMAGE_SIZE; j++) {
+        for (j = 0; j < NN_IN_SIZE; j++) {
             network->W[i][j] = RAND_FLOAT();
+        }
+    }
+}
+
+/**
+ * Initialise the weights and bias vectors with pre-quantized 4b values
+ */
+void neural_network_q4_random_weights(neural_network_q4_t * network_q4)
+{
+    int i, j;
+
+    // Fill with dummy but valid data (1)
+    network_q4->x_scale = 1.0f / 15.0f;
+    for (i = 0; i < NN_OUT_SIZE; i++) {
+        network_q4->w_scale[i] = 0.1f;
+        network_q4->b[i] = RAND_8b();
+
+        for (j = 0; j < NN_IN_SIZE; j++) {
+            network_q4->W[i][j] = RAND_8b(); // 4-bit weight
         }
     }
 }
@@ -59,19 +81,19 @@ void neural_network_softmax(float * activations, int length)
  * Use the weights and bias vector to forward propogate through the neural
  * network and calculate the activations.
  */
-void neural_network_hypothesis(mnist_image_t * image, neural_network_t * network, float activations[MNIST_LABELS])
+void neural_network_hypothesis(mnist_image_t * image, neural_network_t * network, float activations[NN_OUT_SIZE])
 {
     int i, j;
 
-    for (i = 0; i < MNIST_LABELS; i++) {
+    for (i = 0; i < NN_OUT_SIZE; i++) {
         activations[i] = network->b[i];
 
-        for (j = 0; j < MNIST_IMAGE_SIZE; j++) {
+        for (j = 0; j < NN_IN_SIZE; j++) {
             activations[i] += network->W[i][j] * PIXEL_SCALE(image->pixels[j]);
         }
     }
 
-    neural_network_softmax(activations, MNIST_LABELS);
+    neural_network_softmax(activations, NN_OUT_SIZE);
 }
 
 /**
@@ -82,18 +104,18 @@ void neural_network_hypothesis(mnist_image_t * image, neural_network_t * network
  */
 float neural_network_gradient_update(mnist_image_t * image, neural_network_t * network, neural_network_gradient_t * gradient, uint8_t label)
 {
-    float activations[MNIST_LABELS];
+    float activations[NN_OUT_SIZE];
     float b_grad, W_grad;
     int i, j;
 
     // First forward propagate through the network to calculate activations
     neural_network_hypothesis(image, network, activations);
 
-    for (i = 0; i < MNIST_LABELS; i++) {
+    for (i = 0; i < NN_OUT_SIZE; i++) {
         // This is the gradient for a softmax bias input
         b_grad = (i == label) ? activations[i] - 1 : activations[i];
 
-        for (j = 0; j < MNIST_IMAGE_SIZE; j++) {
+        for (j = 0; j < NN_IN_SIZE; j++) {
             // The gradient for the neuron weight is the bias multiplied by the input weight
             W_grad = b_grad * PIXEL_SCALE(image->pixels[j]);
 
@@ -127,10 +149,10 @@ float neural_network_training_step(mnist_dataset_t * dataset, neural_network_t *
     }
 
     // Apply gradient descent to the network
-    for (i = 0; i < MNIST_LABELS; i++) {
+    for (i = 0; i < NN_OUT_SIZE; i++) {
         network->b[i] -= learning_rate * gradient.b_grad[i] / ((float) dataset->size);
 
-        for (j = 0; j < MNIST_IMAGE_SIZE; j++) {
+        for (j = 0; j < NN_IN_SIZE; j++) {
             network->W[i][j] -= learning_rate * gradient.W_grad[i][j] / ((float) dataset->size);
         }
     }
