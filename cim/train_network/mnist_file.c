@@ -114,12 +114,12 @@ mnist_image_t * get_images(const char * path, uint32_t * number_of_images)
         return NULL;
     }
 
-    if (MNIST_IMAGE_WIDTH != header.number_of_rows) {
-        fprintf(stderr, "Invalid number of image rows in image file %s (%d not %d)\n", path, header.number_of_rows, MNIST_IMAGE_WIDTH);
+    if (NN_IN_WIDTH != header.number_of_rows) {
+        fprintf(stderr, "Invalid number of image rows in image file %s (%d not %d)\n", path, header.number_of_rows, NN_IN_WIDTH);
     }
 
-    if (MNIST_IMAGE_HEIGHT != header.number_of_columns) {
-        fprintf(stderr, "Invalid number of image columns in image file %s (%d not %d)\n", path, header.number_of_columns, MNIST_IMAGE_HEIGHT);
+    if (NN_IN_HEIGHT != header.number_of_columns) {
+        fprintf(stderr, "Invalid number of image columns in image file %s (%d not %d)\n", path, header.number_of_columns, NN_IN_HEIGHT);
     }
 
     *number_of_images = header.number_of_images;

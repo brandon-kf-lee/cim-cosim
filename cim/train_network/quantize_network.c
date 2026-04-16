@@ -66,10 +66,10 @@ int main(int argc, char **argv)
     qnet.x_scale = 1.0f / 15.0f;
 
     // Per-output-channel weight quantization + bias quantization
-    for (int i = 0; i < MNIST_LABELS; i++) {
+    for (int i = 0; i < NN_OUT_SIZE; i++) {
         float max_abs = 0.0f;
 
-        for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
+        for (int j = 0; j < NN_IN_SIZE; j++) {
             float a = fabsf(fnet.W[i][j]);
             if (a > max_abs) max_abs = a;
         }
@@ -79,7 +79,7 @@ int main(int argc, char **argv)
         qnet.w_scale[i] = max_abs / 7.0f;
 
         // Quantize weights for this output channel
-        for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
+        for (int j = 0; j < NN_IN_SIZE; j++) {
             int q = (int)lrintf(fnet.W[i][j] / qnet.w_scale[i]);
             qnet.W[i][j] = clamp_s4_int(q);
         }
@@ -95,7 +95,7 @@ int main(int argc, char **argv)
     }
 
     fprintf(stderr, "x_scale=%g\n", qnet.x_scale);
-    for (int i = 0; i < MNIST_LABELS; i++) {
+    for (int i = 0; i < NN_OUT_SIZE; i++) {
         fprintf(stderr, "w_scale[%d]=%g\n", i, qnet.w_scale[i]);
     }
     fprintf(stderr, "wrote %s (%zu bytes)\n", out_path, sizeof(qnet));
