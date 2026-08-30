@@ -32,3 +32,26 @@ cd buildroot
 make qemu_riscv64_virt_defconfig
 make 
 ```
+
+Note: If your username has an '@' symbol in it (e.g. name@university.edu), build buildroot in a directory you don't own, like /tmp.
+
+```bash
+make O=/tmp/buildroot_build qemu_riscv64_virt_defconfig
+make O=/tmp/buildroot_build
+```
+
+Note: If make complains: "You seem to have the current working directory in your
+LD_LIBRARY_PATH environment variable. This doesn't work.", temporarily unset the paths.
+
+```bash
+unset LIBRARY_PATH
+unset LD_LIBRARY_PATH
+```
+
+### Buildroot settings to configure:
+```bash
+make menuconfig
+```
+1. Enable perf: Kernel -> Linux Kernel Tools -> perf
+2. Set Linux kernel version to 6.18.7
+

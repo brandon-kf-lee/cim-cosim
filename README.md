@@ -6,6 +6,8 @@ git clone https://github.com/brandon-kf-lee/cim-cosim.git
 cd cim-cosim
 git submodule update --init
 ```
+- Download all tools using the setup script in /tools, then build them.
+
 
 ## Note
 This repository currently contains raw research code, as this is a proof-of-concept research prototype. The repository is currently undergoing cleanup and documentation.
