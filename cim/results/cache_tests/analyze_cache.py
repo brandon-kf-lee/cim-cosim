@@ -6,7 +6,7 @@ Parse QEMU Cache Modelling TCG Plugin logs and compute representative (median) c
 delta-derived metrics for CIM & CPU sections.
 https://www.qemu.org/2021/08/19/tcg-cache-modelling-plugin/
 
-Expected files under ./results/ like:
+Expected files under ./results/[mnist|synthetic] like:
   run_base_1.log
   run_cim_overhead_1.log
   run_cim_setup_1.log
