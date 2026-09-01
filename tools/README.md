@@ -33,20 +33,26 @@ make qemu_riscv64_virt_defconfig
 make 
 ```
 
-Note: If your username has an '@' symbol in it (e.g. name@university.edu), build buildroot in a directory you don't own, like /tmp.
+### Common Build Issues
+1. If your username has an '@' symbol in it (e.g. name@university.edu), build buildroot in a directory you don't own, like /tmp.
 
-```bash
-make O=/tmp/buildroot_build qemu_riscv64_virt_defconfig
-make O=/tmp/buildroot_build
-```
+    ```bash
+    make O=/tmp/buildroot_build qemu_riscv64_virt_defconfig
+    make O=/tmp/buildroot_build
+    ```
 
-Note: If make complains: "You seem to have the current working directory in your
+2. If make complains: "You seem to have the current working directory in your
 LD_LIBRARY_PATH environment variable. This doesn't work.", temporarily unset the paths.
 
-```bash
-unset LIBRARY_PATH
-unset LD_LIBRARY_PATH
-```
+    ```bash
+    unset LIBRARY_PATH
+    unset LD_LIBRARY_PATH
+    ```
+
+3. If there are issues building ```host-gcc-initial```, change Toolchain type from Buildroot toolchain to External toolchain in ```menuconfig```.
+    ```
+    Toolchain -> Toolchain type -> External toolchain
+    ```
 
 ### Buildroot settings to configure:
 ```bash
