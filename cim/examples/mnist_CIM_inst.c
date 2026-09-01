@@ -37,35 +37,43 @@ int main(int argc, char **argv)
     if (read_exact_file(opts.path_network, network_q4, sizeof(*network_q4)) != 0)
         return 1;
 
-    // Load Image(s)
-    mnist_dataset_t dataset;
-    memset(&dataset, 0, sizeof(dataset));
-    if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0) return 1; 
-
     // Prep Variables
     cim_dev_t *dev = NULL;              // CIM device
+    mnist_dataset_t dataset;            // MNIST image dataset
     int rc = 0;                         // CIM return values
     uint8_t *input_q = NULL;            // Quantized image input
     int32_t *logits  = NULL;            // Raw output
     uint64_t input_q_phys, logits_phys; // Physical addresses
-    float k[MNIST_LABELS];              // Dequantization scaling factors    
+    float k[NN_OUT_SIZE];               // Dequantization scaling factors
 
     // Align allocated memory to page size
-    if (posix_memalign((void **)&input_q, 4096, MNIST_IMAGE_SIZE) != 0 || !input_q) {
+    if (posix_memalign((void **)&input_q, 4096, NN_IN_SIZE) != 0 || !input_q) {
         perror("posix_memalign input_q");
         goto out;
     }
-    if (posix_memalign((void **)&logits, 4096, sizeof(int32_t) * MNIST_LABELS) != 0 || !logits) {
+    if (posix_memalign((void **)&logits, 4096, sizeof(int32_t) * NN_OUT_SIZE) != 0 || !logits) {
         perror("posix_memalign logits");
         goto out;
     }
     
     // Lock virtual address space into RAM to prevent paging
-    if (mlock(input_q, MNIST_IMAGE_SIZE) != 0) perror("mlock input_q");
-    if (mlock(logits, sizeof(int32_t) * MNIST_LABELS) != 0) perror("mlock logits");
+    if (mlock(input_q, NN_IN_SIZE) != 0) perror("mlock input_q");
+    if (mlock(logits, sizeof(int32_t) * NN_OUT_SIZE) != 0) perror("mlock logits");
 
-    memset(input_q, 0, MNIST_IMAGE_SIZE);
-    memset(logits,  0, sizeof(int32_t) * MNIST_LABELS);
+    memset(input_q, 0, NN_IN_SIZE);
+    memset(logits,  0, sizeof(int32_t) * NN_OUT_SIZE);
+
+    // Load input
+#if USE_SYNTHETIC_NETWORK
+    // Synthetic Mode: No dataset to load, just fill the dummy image with 1s
+    printf("Running Large Synthetic Network (%dx%d)...\n", NN_IN_SIZE, NN_OUT_SIZE);
+    memset(input_q, 1, NN_IN_SIZE); 
+#else
+    // MNIST Mode: Load dataset
+    printf("Running MNIST Network (%dx%d)...\n", NN_IN_SIZE, NN_OUT_SIZE);
+    memset(&dataset, 0, sizeof(dataset));
+    if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0) return 1; 
+#endif
 
     /* ---------------- instret Setup ---------------- */
     // Using lighter instret reading to reduce noise when enabling/disabling perf gates
@@ -95,8 +103,8 @@ int main(int argc, char **argv)
 
     // Pre-configure input & output locations, since it doesn't change between inferences
     rc = cim_configure_inference(dev,
-                                 input_q_phys, MNIST_IMAGE_SIZE,
-                                 logits_phys, sizeof(int32_t) * MNIST_LABELS,
+                                 input_q_phys, NN_IN_SIZE,
+                                 logits_phys, sizeof(int32_t) * NN_OUT_SIZE,
                                  INPUT_BASE_ADDR, OUTPUT_BASE_ADDR);
     if (rc != CIM_OK) goto out;    
 
@@ -109,7 +117,7 @@ int main(int argc, char **argv)
 
     /* Pre-compute dequantization scaling factors (reduces work done in main loop)
        Necessary for comparable scores with per-class w_scale */
-    for (int i = 0; i < MNIST_LABELS; i++) {
+    for (int i = 0; i < NN_OUT_SIZE; i++) {
         k[i] = network_q4->x_scale * network_q4->w_scale[i];
     }
 
@@ -121,16 +129,19 @@ int main(int argc, char **argv)
     
     // Accuracy metrics
     uint64_t correct = 0, total = 0;
+    int label = 0;
     
     for (uint64_t it = 0; it < opts.iters; it++) {
         
-        // Load image from dataset 
+#if !USE_SYNTHETIC_NETWORK
+        // Only load new images for MNIST
         uint32_t idx = (uint32_t)(it % dataset.size);
         const mnist_image_t *img = &dataset.images[idx];
-        int label = dataset.labels[idx];
+        label = dataset.labels[idx];
 
         // Quantize MNIST image to 4 bits per pixel
         quantize_image_to_u4(img, input_q);
+#endif        
 
         // Start and wait for asynchronous inference
         cim_start_inference(dev);
@@ -140,7 +151,7 @@ int main(int argc, char **argv)
         // Argmax with integrated per-class dequantization
         int pred = 0;
         float best = (float)logits[0] * k[0];
-        for (int i = 1; i < MNIST_LABELS; i++) {
+        for (int i = 1; i < NN_OUT_SIZE; i++) {
             float s = (float)logits[i] * k[i];
             if (s > best) { best = s; pred = i; }
         }
@@ -161,8 +172,13 @@ int main(int argc, char **argv)
     printf("instret: setup instructions=     %" PRIu64 "\n", setup_end - setup_start);
     printf("instret: inference instructions= %" PRIu64 "\n", infr_end - infr_start);
 
+#if !USE_SYNTHETIC_NETWORK
     printf("accuracy: %" PRIu64 "/%" PRIu64 " = %.2f%%\n",
-               correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
+           correct, total, total ? (100.0 * (double)correct / (double)total) : 0.0);
+#else
+    printf("Synthetic Inference Complete.\n");
+#endif
+
 out:
     free_dataset(&dataset);
     if (dev) cim_close(dev);

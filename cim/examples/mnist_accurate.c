@@ -22,11 +22,11 @@
  */
 static void neural_network_hypothesis(const float *image,
                                       const neural_network_t *network,
-                                      float activations[MNIST_LABELS])
+                                      float activations[NN_OUT_SIZE])
 {
-    for (int i = 0; i < MNIST_LABELS; i++) {
+    for (int i = 0; i < NN_OUT_SIZE; i++) {
         float sum = network->b[i];
-        for (int j = 0; j < MNIST_IMAGE_SIZE; j++) {
+        for (int j = 0; j < NN_IN_SIZE; j++) {
             /* CPU path scales pixels to [0,1] */
             sum += network->W[i][j] * image[j];
         }
@@ -34,8 +34,8 @@ static void neural_network_hypothesis(const float *image,
     }
 }
 
-void normalize_image_to_f32(const mnist_image_t *img, float out_f[MNIST_IMAGE_SIZE]) {
-    for (int j = 0; j < MNIST_IMAGE_SIZE; j++)
+void normalize_image_to_f32(const mnist_image_t *img, float out_f[NN_IN_SIZE]) {
+    for (int j = 0; j < NN_IN_SIZE; j++)
         out_f[j] = ((float)img->pixels[j]) / 255.0f;
 }
 
@@ -57,8 +57,8 @@ int main(int argc, char **argv)
     if (load_t10k_dataset(opts.path_t10k_images, opts.path_t10k_labels, &dataset) != 0)
         return 1;
     
-    float input_f[MNIST_IMAGE_SIZE];
-    float activations[MNIST_LABELS];
+    float input_f[NN_IN_SIZE];
+    float activations[NN_OUT_SIZE];
     /* ---- Perform inference ---- */
     uint64_t correct = 0, total = 0;
     for (uint64_t it = 0; it < opts.iters; it++) {
@@ -72,7 +72,7 @@ int main(int argc, char **argv)
         normalize_image_to_f32(img, input_f);
         neural_network_hypothesis(input_f, &network, activations);
         
-        int pred = argmax_f32(activations, MNIST_LABELS);
+        int pred = argmax_f32(activations, NN_OUT_SIZE);
 
         // Increment correct predictions
         total++;
