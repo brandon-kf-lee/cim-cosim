@@ -39,7 +39,6 @@ SC_MODULE(Bridge) {
 
     // CTRL (memory controller) and DMA interrupt handler
     sc_core::sc_in<bool> irq; // TODO: rename ctrl_irq
-    //sc_core::sc_in<bool> dma_irq;
     
     void run();
 
@@ -58,15 +57,6 @@ private:
 
     /* Variables to store delay time of each transaction */
     sc_core::sc_time t_start, t_end, t_delta;
-
-    // // Abstracted memory controller writes
-    // void load_matrix(float* matrix, int row_size, int col_size, uint32_t base_addr);
-    // void load_f_vector(float* vector, int size, uint32_t base_addr);
-    // void load_u8_vector(uint8_t* vector, int size, uint32_t base_addr);
-    
-    // // DMA functions
-    // void dma_transfer(const void* src_data, uint32_t size, uint32_t dst_addr);
-    // void dma_wait();
 
 };
 
