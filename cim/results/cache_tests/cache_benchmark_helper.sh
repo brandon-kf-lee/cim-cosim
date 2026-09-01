@@ -1,10 +1,15 @@
 #!/bin/sh
 
+# cache_benchmark_helper.sh
+# Boots QEMU directly into one payload specified by run_cache_profiling.sh, 
+#   attach QEMU cache plugin and SystemC CIM device. 
+
+
 # Because the CIM benchmark needs access to the entire system (user + kernelspace),
-# this script was created to automatically start the CIM testbench on bootup, then 
-# immediately exit. The same will then be done with a baseline run (with no CIM)
-# execution, then the two results will be subtracted to get the cache effects in 
-# the CIM program only.
+# this script was created to automatically start the testbench on bootup, then 
+# immediately exit. The same will then be done with a baseline run (with no 
+# computation), then the two results will be subtracted to get the cache effects in 
+# the desired program only.
 
 set -eu
 
@@ -22,18 +27,29 @@ SYSTEMC_DIR=/nfshome/bellee@chapman.edu/CIM/cim-mem-ctrl/mem_ctrl
 SYSTEMC_BIN=$SYSTEMC_DIR/listen
 SYSTEMC_SOCK=/tmp/systemc.sock
 
-# Usage:
-#   ./run_cache_test.sh [init_script] [runs]
-# Examples:
-#   ./run_cache_test.sh run_cim.sh 3
-#   ./run_cache_test.sh run_base.sh 5
+# Passed in from run_cache_profiling.sh
 INIT_SCRIPT=${1:-run_cim.sh}
 RUNS=${2:-1}
+SYNTH_FLAG=${3:-0} # 0 for MNIST, 1 for Synthetic
 
 BASE=$(basename "$INIT_SCRIPT")
 BASE=${BASE%.sh}
 
-mkdir -p "$RESULTS"
+# Output logfile directory
+if [ "$SYNTH_FLAG" -eq 1 ]; then
+  RESULTS_DIR="$RESULTS/synthetic"
+else
+  RESULTS_DIR="$RESULTS/mnist"
+fi
+mkdir -p "$RESULTS_DIR"
+
+# --- SystemC Compilation Phase ---
+echo "[cache_benchmark_helper] Recompiling SystemC server (SYNTHETIC=$SYNTH_FLAG)..."
+(
+  cd "$SYSTEMC_DIR"
+  make clean >/dev/null
+  make SYNTHETIC="$SYNTH_FLAG" >/dev/null
+)
 
 cleanup_systemc() {
   # best-effort cleanup
@@ -44,10 +60,10 @@ cleanup_systemc() {
 
 i=1
 while [ "$i" -le "$RUNS" ]; do
-  LOGFILE="$RESULTS/${BASE}_${i}.log"
+  LOGFILE="$RESULTS_DIR/${BASE}_${i}.log"
   rm -f "$LOGFILE"
 
-  echo "[run_cache_test] run $i/$RUNS: init=$INIT_SCRIPT log=$LOGFILE" >&2
+  echo "[cache_benchmark_helper] run $i/$RUNS: init=$INIT_SCRIPT log=$LOGFILE" >&2
 
   # Ensure no stale socket from a previous run
   rm -f "$SYSTEMC_SOCK" 2>/dev/null || true
@@ -73,7 +89,8 @@ while [ "$i" -le "$RUNS" ]; do
     -append "rootwait root=/dev/vda rw init=/usr/bin/$INIT_SCRIPT" \
     -drive file="$ROOTFS",format=raw \
     -plugin file="$PLUGIN",cores=1,dcachesize=32768,dassoc=4,dblksize=64,icachesize=32768,iassoc=4,iblksize=64,evict=lru,limit=20 \
-    -d plugin -D "$LOGFILE"
+    -d plugin -D "$LOGFILE" \
+    -icount shift=0
 
   # Stop SystemC server after QEMU exits
   cleanup_systemc
