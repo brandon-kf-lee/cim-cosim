@@ -33,7 +33,7 @@ int load_t10k_dataset(const char *images_path, const char *labels_path, mnist_da
         fclose(fi);
         return -1;
     }
-    if (rows * cols != MNIST_IMAGE_SIZE) {
+    if (rows * cols != NN_IN_SIZE) {
         fprintf(stderr, "ERROR: images are %ux%u, expected 28x28\n", rows, cols);
         fclose(fi);
         return -1;
@@ -46,7 +46,7 @@ int load_t10k_dataset(const char *images_path, const char *labels_path, mnist_da
         return -1;
     }
 
-    size_t img_bytes = (size_t)count * (size_t)MNIST_IMAGE_SIZE;
+    size_t img_bytes = (size_t)count * (size_t)NN_IN_SIZE;
     if (fread(images, 1, img_bytes, fi) != img_bytes) {
         fprintf(stderr, "ERROR: short read images '%s'\n", images_path);
         free(images);
