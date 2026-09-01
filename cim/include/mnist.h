@@ -11,17 +11,32 @@
 #include <errno.h>
 #include <stdlib.h>
 
-/* ---------- MNIST structs ---------- */
+// /* ---------- MNIST structs ---------- */
 
-#define MNIST_IMAGE_WIDTH 28
-#define MNIST_IMAGE_HEIGHT 28
-#define MNIST_IMAGE_SIZE (MNIST_IMAGE_WIDTH * MNIST_IMAGE_HEIGHT)
-#define MNIST_LABELS 10
+// #define MNIST_IMAGE_WIDTH 28
+// #define MNIST_IMAGE_HEIGHT 28
+// #define MNIST_IMAGE_SIZE (MNIST_IMAGE_WIDTH * MNIST_IMAGE_HEIGHT)
+// #define MNIST_LABELS 10
+
+// ==========================================
+// NETWORK TOGGLE
+// 0 = MNIST (784 x 10)
+// 1 = Large Synthetic NN (1024 x 1024)
+// ==========================================
+#if USE_SYNTHETIC_NETWORK
+    #define NN_IN_SIZE 1024
+    #define NN_OUT_SIZE 1024
+#else
+    #define NN_IN_WIDTH 28
+    #define NN_IN_HEIGHT 28
+    #define NN_IN_SIZE (NN_IN_WIDTH * NN_IN_HEIGHT)  // 784
+    #define NN_OUT_SIZE 10
+#endif
 
 // Holds DNN weights and biases, trained on MNIST images
 typedef struct neural_network_t_ {
-    float b[MNIST_LABELS];
-    float W[MNIST_LABELS][MNIST_IMAGE_SIZE];
+    float b[NN_OUT_SIZE];
+    float W[NN_OUT_SIZE][NN_IN_SIZE];
 } neural_network_t;
 
 /* 4-bit quantized neural network 
@@ -29,15 +44,15 @@ typedef struct neural_network_t_ {
  * Stored scales make the file self-describing and reproducible.
  */
 typedef struct neural_network_q4_t_ {
-    float x_scale;                              // float value per 1 LSB of x_q (u4)
-    float w_scale[MNIST_LABELS];                // per-output-channel weight scale
-    int32_t b[MNIST_LABELS];                    // bias in accumulator domain
-    int8_t  W[MNIST_LABELS][MNIST_IMAGE_SIZE];  // signed-4b stored in int8 [-8..7]
+    float x_scale;                             // float value per 1 LSB of x_q (u4)
+    float w_scale[NN_OUT_SIZE];                // per-output-channel weight scale
+    int32_t b[NN_OUT_SIZE];                    // bias in accumulator domain
+    int8_t  W[NN_OUT_SIZE][NN_IN_SIZE];        // signed-4b stored in int8 [-8..7]
 } __attribute__((packed)) neural_network_q4_t;
 
 // 28 x 28 MNIST pixel image with no byte padding
 typedef struct mnist_image_t_ {
-    uint8_t pixels[MNIST_IMAGE_SIZE];
+    uint8_t pixels[NN_IN_SIZE];
 } __attribute__((packed)) mnist_image_t;
 
 // Holds MNIST dataset of images
@@ -54,16 +69,16 @@ typedef struct mnist_dataset_t_ {
 #define CIM_DATA_REGION  0x00001000   // Marker for the start of CIM data section
 
 #define WEIGHT_BASE_ADDR 0x00001000
-#define WEIGHT_SIZE      (MNIST_LABELS * MNIST_IMAGE_SIZE)          // 7840 (4 bits in a 1 byte holder weight)
+#define WEIGHT_SIZE      (NN_OUT_SIZE * NN_IN_SIZE)
 
-#define BIAS_BASE_ADDR   (WEIGHT_BASE_ADDR + WEIGHT_SIZE)           // +7840
-#define BIAS_SIZE        (MNIST_LABELS * sizeof(int32_t))           // 40 (4 byte bias)
+#define BIAS_BASE_ADDR   (WEIGHT_BASE_ADDR + WEIGHT_SIZE)           
+#define BIAS_SIZE        (NN_OUT_SIZE * sizeof(int32_t))           
 
-#define INPUT_BASE_ADDR  (BIAS_BASE_ADDR + BIAS_SIZE)               // +40
-#define INPUT_SIZE       (MNIST_IMAGE_SIZE)                         // 784 (4 bits in a 1 byte holder input)
+#define INPUT_BASE_ADDR  (BIAS_BASE_ADDR + BIAS_SIZE)               
+#define INPUT_SIZE       (NN_IN_SIZE)                         
 
-#define OUTPUT_BASE_ADDR (INPUT_BASE_ADDR + INPUT_SIZE)             // +784
-#define OUTPUT_SIZE      (MNIST_LABELS * sizeof(int32_t))           // 40 (4 byte output)
+#define OUTPUT_BASE_ADDR (INPUT_BASE_ADDR + INPUT_SIZE)             
+#define OUTPUT_SIZE      (NN_OUT_SIZE * sizeof(int32_t))
 
 // ---------- Public functions ----------
 /* Load images dataset */
