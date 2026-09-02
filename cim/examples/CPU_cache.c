@@ -1,5 +1,5 @@
 /*
- * mnist_CPU - MNIST inference using ONLY CPU calculations (INT4/INT4 path)
+ * CPU_cache - Inference using ONLY CPU calculations (INT4/INT4 path)
  * Used to test effects of cache on inference.
  */
 

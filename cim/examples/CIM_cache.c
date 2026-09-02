@@ -1,5 +1,5 @@
 /*
- * mnist_CIM.c - MNIST inference using CIM userspace library (INT4/INT4 path)
+ * CIM_cache.c - Inference using CIM userspace library (INT4/INT4 path)
  * Used to test effects of cache on inference
  */
 
