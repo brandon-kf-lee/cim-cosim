@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Create the results directory if it does not exist
+os.makedirs("results", exist_ok=True)
+
 # 1. Raw Data from Spreadsheet (in picoJoules)
 # Split into CPU and CIM arrays to match the grouping logic of the instruction script
 # Arrays are ordered: [MNIST, Synthetic]
@@ -154,7 +157,7 @@ ax_bot.legend(handles[::-1], leg_labels[::-1], loc='upper center', bbox_to_ancho
 
 # Save Graph 1
 plt.tight_layout()
-output_filename_1 = 'results/total_energy'
+output_filename_1 = "results/total_energy"
 plt.savefig(f"{output_filename_1}.pdf", format='pdf', bbox_inches='tight')
 plt.savefig(f"{output_filename_1}.png", format='png', bbox_inches='tight')
 print(f"Graph 1 generated: saved as '{output_filename_1}'")
@@ -213,7 +216,7 @@ ax2.legend(handles2[::-1], leg_labels2[::-1], loc='center left', bbox_to_anchor=
 plt.tight_layout()
 
 # Save Graph 2
-output_filename_2 = 'results/synthetic_cpu_split'
+output_filename_2 = "results/synthetic_cpu_split"
 plt.savefig(f"{output_filename_2}.pdf", format='pdf', bbox_inches='tight')
 plt.savefig(f"{output_filename_2}.png", format='png', bbox_inches='tight')
 print(f"Graph 2 generated: saved as '{output_filename_2}'")
