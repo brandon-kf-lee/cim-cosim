@@ -1,5 +1,5 @@
 /*
- * mnist_CPU_inst.c - MNIST inference using ONLY CPU calculations (INT4/INT4 path)
+ * CPU_inst.c - Inference using ONLY CPU calculations (INT4/INT4 path)
  * with instret (RISC-V instructions retired) gating around chosen regions.
  *
  */

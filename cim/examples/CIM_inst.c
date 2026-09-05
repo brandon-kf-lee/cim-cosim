@@ -1,5 +1,5 @@
 /*
- * mnist_CIM_inst.c - MNIST inference using CIM userspace library (INT4/INT4 path)
+ * CIM_inst.c - Inference using CIM userspace library (INT4/INT4 path)
  * with instret (RISC-V instructions retired) gating around chosen regions.
  *
  */
