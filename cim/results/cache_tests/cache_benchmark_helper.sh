@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # cache_benchmark_helper.sh
-# Boots QEMU directly into one payload specified by run_cache_profiling.sh, 
+# Boots QEMU directly into one payload specified by run_cache_benchmark.sh, 
 #   attach QEMU cache plugin and SystemC CIM device. 
 
 
@@ -27,7 +27,7 @@ SYSTEMC_DIR=/nfshome/bellee@chapman.edu/CIM/cim-mem-ctrl/mem_ctrl
 SYSTEMC_BIN=$SYSTEMC_DIR/listen
 SYSTEMC_SOCK=/tmp/systemc.sock
 
-# Passed in from run_cache_profiling.sh
+# Passed in from run_cache_benchmark.sh
 INIT_SCRIPT=${1:-run_cim.sh}
 RUNS=${2:-1}
 SYNTH_FLAG=${3:-0} # 0 for MNIST, 1 for Synthetic
