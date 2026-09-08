@@ -2,25 +2,98 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import glob
+import re
+import sys
 
-# Create the results directory if it does not exist
-os.makedirs("results", exist_ok=True)
+# ==========================================
+# CONFIGURATION
+# ==========================================
+OUTPUT_DIR = "results"             # Results directory
 
-# Load and clean the data
-csv_file = "instruction_profiling.csv"
+if (len(sys.argv) < 2):
+    print("Error: missing number of inference iterations per run")
+    sys.exit(1)
+ITERATIONS_PER_RUN = int(sys.argv[1])   # Number of inferences per run
 
-if not os.path.exists(csv_file):
-    print(f"Error: {csv_file} not found!")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# ==========================================
+# LOG PARSER
+# ==========================================
+print(f"Scanning for log files in '{OUTPUT_DIR}'...")
+log_files = glob.glob(f"{OUTPUT_DIR}/**/*.log", recursive=True)
+
+if not log_files:
+    print(f"Error: No .log files found in {OUTPUT_DIR}! Run the bash orchestrator first.")
     exit(1)
 
-# Read CSV, skipping spaces after commas
-df = pd.read_csv(csv_file, skipinitialspace=True)
+parsed_data = []
 
-# Clean column names and string data just in case of trailing spaces
-df.columns = df.columns.str.strip()
-df['Target'] = df['Target'].str.strip()
-df['Network'] = df['Network'].str.strip()
+for filepath in log_files:
+    filename = os.path.basename(filepath).lower()
+    folder = os.path.basename(os.path.dirname(filepath)).lower()
+    
+    # Determine Hardware Target
+    if "cim" in filename:
+        target = "CIM"
+    elif "cpu" in filename:
+        target = "CPU"
+    else:
+        print("Error: unknown target, skipping.")
+        continue # Skip unrecognized logs
+        
+    # Determine Network Topology
+    if "mnist" in folder or "mnist" in filename:
+        network = "MNIST"
+    elif "synthetic" in folder or "synthetic" in filename:
+        network = "Synthetic"
+    else:
+        print("Error: unknown network, skipping.")
+        continue # Skip unrecognized networks
 
+    # Read the log file line by line
+    with open(filepath, 'r') as f:
+        setup_val = None
+        
+        for line in f:
+            # Extract setup instructions
+            setup_match = re.search(r'setup instructions=\s*(\d+)', line)
+            if setup_match:
+                setup_val = int(setup_match.group(1))
+                
+            # Extract inference instructions
+            infr_match = re.search(r'inference instructions=\s*(\d+)', line)
+            if infr_match:
+                infr_val = int(infr_match.group(1))
+                
+                # We expect setup to print right before inference in the C script
+                if setup_val is not None:
+                    parsed_data.append({
+                        'Network': network,
+                        'Target': target,
+                        'Iterations': ITERATIONS_PER_RUN,
+                        'Setup_Inst': setup_val,
+                        'Inference_Inst': infr_val
+                    })
+                    setup_val = None # Reset for the next run in the same log
+
+# Convert to DataFrame
+df = pd.DataFrame(parsed_data)
+
+if df.empty:
+    print("Error: Could not find any valid instruction counts in the logs.")
+    exit(1)
+
+# Save the parsed raw data as a clean CSV 
+csv_file = os.path.join(OUTPUT_DIR, "instruction_benchmarking.csv")
+df.to_csv(csv_file, index=False)
+print(f"Successfully parsed {len(df)} runs. Saved raw data to '{csv_file}'\n")
+
+
+# ==========================================
+# DATA AGGREGATION & CONSOLE OUTPUT
+# ==========================================
 # Calculate the per-inference instructions
 df['Per_Inference_Inst'] = df['Inference_Inst'] / df['Iterations']
 
@@ -28,17 +101,13 @@ df['Per_Inference_Inst'] = df['Inference_Inst'] / df['Iterations']
 inference_agg_df = df.groupby(['Network', 'Target'])['Per_Inference_Inst'].median().unstack()
 setup_agg_df = df.groupby(['Network', 'Target'])['Setup_Inst'].median().unstack()
 
-
 # Ensure networks are ordered logically (MNIST first, then Synthetic)
 networks_present = inference_agg_df.index.tolist()
 networks = []
 if 'MNIST' in networks_present: networks.append('MNIST')
 if 'Synthetic' in networks_present: networks.append('Synthetic')
 
-# ==========================================
-# CONSOLE OUTPUT: Print Medians
-# ==========================================
-print("\n" + "="*45)
+print("="*45)
 print(" MEDIAN INSTRUCTION COUNTS SUMMARY")
 print("="*45)
 for n in networks:
@@ -52,7 +121,10 @@ for n in networks:
     print("-" * 45)
 print("\n")
 
-# Prepare data for plotting
+
+# ==========================================
+# GRAPH GENERATION
+# ==========================================
 cpu_medians = [inference_agg_df.loc[n, 'CPU'] for n in networks]
 cim_medians = [inference_agg_df.loc[n, 'CIM'] for n in networks]
 
@@ -92,9 +164,6 @@ for i in range(len(networks)):
     cpu_val = cpu_medians[i]
     cim_val = cim_medians[i]
 
-    print(cpu_val)
-    print(cim_val)
-
     # Calculate reduction percentage
     reduction = ((cpu_val - cim_val) / cpu_val) * 100
     
@@ -112,7 +181,7 @@ ax.set_axisbelow(True) # Put grid behind bars
 plt.tight_layout()
 
 # Save the plot as PDF & PNG
-output_filename = "results/CPU_instructions_per_inference"
+output_filename = os.path.join(OUTPUT_DIR, "CPU_instructions_per_inference")
 plt.savefig(f"{output_filename}.pdf", format='pdf', bbox_inches='tight')
 plt.savefig(f"{output_filename}.png", format='png', bbox_inches='tight')
 
