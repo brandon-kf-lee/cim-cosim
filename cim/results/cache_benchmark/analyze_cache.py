@@ -27,8 +27,6 @@ Compute:
 - Inference-only total:    (total - overhead - setup_1x)
 - Inference-only per-iter: inference_only / iters
 
-Usage:
-  python3 analyze_cache.py --results ./results --iters 1000 --setup-iters 10000
 """
 
 from __future__ import annotations
@@ -41,6 +39,8 @@ import statistics as stats
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+SETUP_ITERS = 10000  # For amplifying setup region for easier measurement
+RESULTS_BASE_DIR = "./results"
 
 CORE0_RE = re.compile(
     r"^\s*0\s+(\d+)\s+(\d+)\s+([0-9.]+)%\s+(\d+)\s+(\d+)\s+([0-9.]+)%\s*$"
@@ -93,9 +93,9 @@ def parse_core0(path: str) -> Optional[Counters]:
     return None
 
 
-def load_group(results_dir: str, prefix: str) -> List[Tuple[str, Counters]]:
-    """Load all logs matching prefix_*.log"""
-    pattern = os.path.join(results_dir, f"{prefix}_*.log")
+def load_group(directory: str, prefix: str) -> List[Tuple[str, Counters]]:
+    """Load all logs matching prefix_*.log in the given directory"""
+    pattern = os.path.join(directory, f"{prefix}_*.log")
     out: List[Tuple[str, Counters]] = []
     for p in sorted(glob.glob(pattern)):
         c = parse_core0(p)
@@ -125,104 +125,127 @@ def fmt_counts(c: Counters) -> str:
         f"Imiss%={c.imiss_rate_pct:>8.4f}"
     )
 
-def fmt_row(name: str, label: str, c: Counters) -> str:
-    return f"{name:<12s} {label:<6s}  {fmt_counts(c)}"
-
-def ensure_nonempty(name: str, group: List[Tuple[str, Counters]]) -> None:
-    if not group:
-        raise SystemExit(f"ERROR: no logs found for group '{name}'")
+def fmt_row(label: str, c: Counters) -> str:
+    return f"{label:<6s}  {fmt_counts(c)}"
 
 
-def main() -> None:
+def main() -> None:    
     ap = argparse.ArgumentParser()
-    ap.add_argument("--results", default="./results", help="directory containing run_*.log files")
-    ap.add_argument("--iters", type=int, default=1000, help="number of inferences in *total* runs")
-    ap.add_argument("--setup-iters", type=int, default=10000, help="number of setup loops in *setup* runs")
+    ap.add_argument("--iters", type=int, default=1000, help="number of inferences in each runs")
+    ap.add_argument("--print-all-regions", action="store_true", help="print data for all test regions")
+    ap.add_argument("--print-raw", action="store_true", help="print median raw values for each test group")
     args = ap.parse_args()
 
-    results_dir = args.results
     iters = args.iters
-    setup_iters = args.setup_iters
+    print_all_regions = bool(args.print_all_regions)
+    print_raw = bool(args.print_raw)
 
-    groups = {
-        "base": load_group(results_dir, "run_base"),
-        "cim_overhead": load_group(results_dir, "run_cim_overhead"),
-        "cim_setup": load_group(results_dir, "run_cim_setup"),
-        "cim_total": load_group(results_dir, "run_cim_total"),
-        "cpu_overhead": load_group(results_dir, "run_cpu_overhead"),
-        "cpu_setup": load_group(results_dir, "run_cpu_setup"),
-        "cpu_total": load_group(results_dir, "run_cpu_total"),
-    }
+    if not os.path.isdir(RESULTS_BASE_DIR):
+        print(f"ERROR: Base results directory '{RESULTS_BASE_DIR}' not found!")
+        return
 
-    # Required for CIM deltas
-    for req in ("base", "cim_overhead", "cim_setup", "cim_total"):
-        ensure_nonempty(req, groups[req])
+    # Find all subdirectories in ./results (e.g., 'mnist', 'synthetic')
+    networks = [d for d in os.listdir(RESULTS_BASE_DIR) if os.path.isdir(os.path.join(RESULTS_BASE_DIR, d))]
+    
+    if not networks:
+        print(f"ERROR: No network subdirectories found in '{RESULTS_BASE_DIR}'. Expected folders like 'mnist' or 'synthetic'.")
+        return
 
-    # Representative (median) for each group
-    rep: Dict[str, Dict[str, Counters]] = {}
-    for name, items in groups.items():
-        if not items:
-            continue
-        cs = [c for _, c in items]
-        rep[name] = {
-            "median": median_counters(cs),
+    print("Key:")
+    if(print_all_regions):
+        print("overhd: Overhead region: simulation overhead. Variable declaration, memory alignment")
+        print("setup: Setup region: CIM device configuration, loading neural network")
+        print(f"infer: Total inference region: All {iters} inferences in one one")
+    print("iter: Number of cache accesses per inference")
+
+    for network in sorted(networks):
+        print(f"\n==============================================================================")
+        print(f" NETWORK WORKLOAD: {network.upper()}")
+        print(f"==============================================================================")
+
+        network_dir = os.path.join(RESULTS_BASE_DIR, network)
+
+        groups = {
+            "base": load_group(network_dir, "run_base"),
+            "cim_overhead": load_group(network_dir, "run_cim_overhead"),
+            "cim_setup": load_group(network_dir, "run_cim_setup"),
+            "cim_total": load_group(network_dir, "run_cim_total"),
+            "cpu_overhead": load_group(network_dir, "run_cpu_overhead"),
+            "cpu_setup": load_group(network_dir, "run_cpu_setup"),
+            "cpu_total": load_group(network_dir, "run_cpu_total"),
         }
 
-    print("=== Representative raw counters per group (median) ===")
-    for name in ("base", "cim_overhead", "cim_setup", "cim_total", "cpu_overhead", "cpu_setup", "cpu_total"):
-        if name not in rep:
+        if not groups["base"]:
+            print(f"  [!] Skipping {network}: Missing 'run_base' logs.")
             continue
-        print(fmt_row(name, "median", rep[name]["median"]))
 
-    print("\n=== How metrics are derived, using median of each group ===")
-    print(f"overhead-only  = (overhead - base)")
-    print(f"setup-only     = (setup - overhead) / {setup_iters}")
-    print(f"inference-only = (total - overhead - setup-only)")
-    print(f"inference/iter = (inference-only / {iters})")
+        # Representative (median) for each group
+        rep: Dict[str, Dict[str, Counters]] = {}
+        for name, items in groups.items():
+            if not items:
+                continue
+            cs = [c for _, c in items]
+            rep[name] = {
+                "median": median_counters(cs),
+            }
 
-    base = rep["base"]["median"]
+        # Print raw stats if desired
+        if (print_raw):
+            print("=== Representative raw counters per group (median) ===")
+            for name in ("base", "cim_overhead", "cim_setup", "cim_total", "cpu_overhead", "cpu_setup", "cpu_total"):
+                if name not in rep:
+                    continue
+                print(fmt_row(name, "median", rep[name]["median"]))
 
-    # ------------ CIM section deltas (using median) ------------
-    cim_oh = rep["cim_overhead"]["median"]
-    cim_setup_raw = rep["cim_setup"]["median"]
-    cim_total = rep["cim_total"]["median"]
+        base = rep["base"]["median"]
 
-    cim_overhead_only = cim_oh - base
-    cim_setup_amplified = cim_setup_raw - cim_oh
-    cim_setup_only = cim_setup_amplified.div(setup_iters)  # Divide out the amplification
-    
-    # Total run has 1 setup iteration, so subtract overhead and 1 setup.
-    cim_infer_total = (cim_total - cim_oh) - cim_setup_only
-    cim_infer_per_iter = cim_infer_total.div(iters)
+        # ------------ CIM section deltas ------------
+        has_cim = all(g in rep for g in ("cim_overhead", "cim_setup", "cim_total"))
+        if has_cim:
+            cim_oh = rep["cim_overhead"]["median"]
+            cim_setup_raw = rep["cim_setup"]["median"]
+            cim_total = rep["cim_total"]["median"]
 
-    print("\n=== CIM derived metrics (using median of each group) ===")
-    print(fmt_row("CIM", "overhd", cim_overhead_only))
-    print(fmt_row("CIM", "setup",  cim_setup_only))
-    print(fmt_row("CIM", "infer",  cim_infer_total))
-    print(fmt_row("CIM", "iter",   cim_infer_per_iter))
+            cim_overhead_only = cim_oh - base
+            cim_setup_amplified = cim_setup_raw - cim_oh
+            cim_setup_only = cim_setup_amplified.div(SETUP_ITERS)
+            
+            cim_infer_total = (cim_total - cim_oh) - cim_setup_only
+            cim_infer_per_iter = cim_infer_total.div(iters)
 
-    # ------------ CPU section deltas (using median) ------------
-    cpu_oh = rep["cpu_overhead"]["median"]
-    cpu_setup_raw = rep["cpu_setup"]["median"]
-    cpu_total = rep["cpu_total"]["median"]
+            print("\n=== CIM derived metrics (using median of each group) ===")
+            if(print_all_regions):
+                print(fmt_row("overhd", cim_overhead_only))
+                print(fmt_row("setup",  cim_setup_only))
+                print(fmt_row("infer",  cim_infer_total))
+            print(fmt_row("iter",   cim_infer_per_iter))
+        else:
+            print("\n=== CIM derived metrics ===")
+            print("  [!] Missing CIM logs, skipping calculations.")
 
-    cpu_overhead_only = cpu_oh - base
-    cpu_setup_amplified = cpu_setup_raw - cpu_oh
-    cpu_setup_only = cpu_setup_amplified.div(setup_iters) # Divide out the amplification!
-    
-    # Total run has 1 setup iteration. So subtract overhead and 1 setup.
-    cpu_infer_total = (cpu_total - cpu_oh) - cpu_setup_only
-    cpu_infer_per_iter = cpu_infer_total.div(iters)
+        # ------------ CPU section deltas ------------
+        has_cpu = all(g in rep for g in ("cpu_overhead", "cpu_setup", "cpu_total"))
+        if has_cpu:
+            cpu_oh = rep["cpu_overhead"]["median"]
+            cpu_setup_raw = rep["cpu_setup"]["median"]
+            cpu_total = rep["cpu_total"]["median"]
 
-    print("\n=== CPU derived metrics (using median of each group) ===")
-    print(fmt_row("CPU", "overhd", cpu_overhead_only))
-    print(fmt_row("CPU", "setup",  cpu_setup_only))
-    print(fmt_row("CPU", "infer",  cpu_infer_total))
-    print(fmt_row("CPU", "iter",   cpu_infer_per_iter))
+            cpu_overhead_only = cpu_oh - base
+            cpu_setup_amplified = cpu_setup_raw - cpu_oh
+            cpu_setup_only = cpu_setup_amplified.div(SETUP_ITERS)
+            
+            cpu_infer_total = (cpu_total - cpu_oh) - cpu_setup_only
+            cpu_infer_per_iter = cpu_infer_total.div(iters)
 
-
-    print("\nDone.")
-
+            print("\n=== CPU derived metrics (using median of each group) ===")
+            if(print_all_regions):
+                print(fmt_row("overhd", cpu_overhead_only))
+                print(fmt_row("setup",  cpu_setup_only))
+                print(fmt_row("infer",  cpu_infer_total))
+            print(fmt_row("iter",   cpu_infer_per_iter))
+        else:
+            print("\n=== CPU derived metrics ===")
+            print("  [!] Missing CPU logs, skipping calculations.")
 
 if __name__ == "__main__":
     main()
