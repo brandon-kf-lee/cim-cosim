@@ -4,19 +4,20 @@ import numpy as np
 import os
 import glob
 import re
-import sys
+import argparse
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
-OUTPUT_DIR = "results"             # Results directory
-
-if (len(sys.argv) < 2):
-    print("Error: missing number of inference iterations per run")
-    sys.exit(1)
-ITERATIONS_PER_RUN = int(sys.argv[1])   # Number of inferences per run
-
+OUTPUT_DIR = "results"                  # Results directory
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--iters", type=int, default=1000, help="number of inferences in each run")
+args = ap.parse_args()
+
+ITERATIONS_PER_RUN = args.iters
+
 
 # ==========================================
 # LOG PARSER
