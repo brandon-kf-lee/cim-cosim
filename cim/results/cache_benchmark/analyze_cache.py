@@ -35,6 +35,7 @@ import argparse
 import glob
 import os
 import re
+import csv
 import statistics as stats
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -50,10 +51,10 @@ CORE0_RE = re.compile(
 class Counters:
     dacc: int
     dmiss: int
-    dmiss_rate_pct: float
+    dmiss_rate: float
     iacc: int
     imiss: int
-    imiss_rate_pct: float
+    imiss_rate: float
 
     def __sub__(self, other: "Counters") -> "Counters":
         dacc = self.dacc - other.dacc
@@ -61,9 +62,9 @@ class Counters:
         iacc = self.iacc - other.iacc
         imiss = self.imiss - other.imiss
         # recompute rates from counts (safer than subtracting %)
-        dmiss_rate_pct = (100.0 * dmiss / dacc) if dacc > 0 else 0.0
-        imiss_rate_pct = (100.0 * imiss / iacc) if iacc > 0 else 0.0
-        return Counters(dacc, dmiss, dmiss_rate_pct, iacc, imiss, imiss_rate_pct)
+        dmiss_rate = (100.0 * dmiss / dacc) if dacc > 0 else 0.0
+        imiss_rate = (100.0 * imiss / iacc) if iacc > 0 else 0.0
+        return Counters(dacc, dmiss, dmiss_rate, iacc, imiss, imiss_rate)
 
     def div(self, n: float) -> "Counters":
         if n == 0:
@@ -72,9 +73,9 @@ class Counters:
         dmiss = int(round(self.dmiss / n))
         iacc = int(round(self.iacc / n))
         imiss = int(round(self.imiss / n))
-        dmiss_rate_pct = (100.0 * dmiss / dacc) if dacc > 0 else 0.0
-        imiss_rate_pct = (100.0 * imiss / iacc) if iacc > 0 else 0.0
-        return Counters(dacc, dmiss, dmiss_rate_pct, iacc, imiss, imiss_rate_pct)
+        dmiss_rate = (100.0 * dmiss / dacc) if dacc > 0 else 0.0
+        imiss_rate = (100.0 * imiss / iacc) if iacc > 0 else 0.0
+        return Counters(dacc, dmiss, dmiss_rate, iacc, imiss, imiss_rate)
 
 
 def parse_core0(path: str) -> Optional[Counters]:
@@ -85,11 +86,11 @@ def parse_core0(path: str) -> Optional[Counters]:
             if m:
                 dacc = int(m.group(1))
                 dmiss = int(m.group(2))
-                dmiss_rate_pct = float(m.group(3))
+                dmiss_rate = float(m.group(3))
                 iacc = int(m.group(4))
                 imiss = int(m.group(5))
-                imiss_rate_pct = float(m.group(6))
-                return Counters(dacc, dmiss, dmiss_rate_pct, iacc, imiss, imiss_rate_pct)
+                imiss_rate = float(m.group(6))
+                return Counters(dacc, dmiss, dmiss_rate, iacc, imiss, imiss_rate)
     return None
 
 
@@ -109,9 +110,9 @@ def median_counters(cs: List[Counters]) -> Counters:
     dmiss = int(stats.median([c.dmiss for c in cs]))
     iacc = int(stats.median([c.iacc for c in cs]))
     imiss = int(stats.median([c.imiss for c in cs]))
-    dmiss_rate_pct = (100.0 * dmiss / dacc) if dacc else 0.0
-    imiss_rate_pct = (100.0 * imiss / iacc) if iacc else 0.0
-    return Counters(dacc, dmiss, dmiss_rate_pct, iacc, imiss, imiss_rate_pct)
+    dmiss_rate = (100.0 * dmiss / dacc) if dacc else 0.0
+    imiss_rate = (100.0 * imiss / iacc) if iacc else 0.0
+    return Counters(dacc, dmiss, dmiss_rate, iacc, imiss, imiss_rate)
 
 
 def fmt_counts(c: Counters) -> str:
@@ -119,10 +120,10 @@ def fmt_counts(c: Counters) -> str:
     return (
         f"Dacc={c.dacc:>12,}  "
         f"Dmiss={c.dmiss:>9,}  "
-        f"Dmiss%={c.dmiss_rate_pct:>8.4f}  |  "
+        f"Dmiss%={c.dmiss_rate:>8.4f}  |  "
         f"Iacc={c.iacc:>12,}  "
         f"Imiss={c.imiss:>9,}  "
-        f"Imiss%={c.imiss_rate_pct:>8.4f}"
+        f"Imiss%={c.imiss_rate:>8.4f}"
     )
 
 def fmt_row(label: str, c: Counters) -> str:
@@ -157,6 +158,25 @@ def main() -> None:
         print("setup: Setup region: CIM device configuration, loading neural network")
         print(f"infer: Total inference region: All {iters} inferences in one one")
     print("iter: Number of cache accesses per inference")
+
+    # List to hold CSV rows
+    csv_data = []
+
+    def append_to_csv(network, target, region, c: Counters):
+        # Format network name: 'MNIST' in all caps, others capitalized (e.g., 'Synthetic')
+        net_formatted = network.upper() if network.lower() == "mnist" else network.capitalize()
+        
+        csv_data.append({
+            'Network': net_formatted,
+            'Target': target,
+            'Region': region,
+            'Dacc': c.dacc,
+            'Dmiss': c.dmiss,
+            'Dmiss_Rate': round(c.dmiss_rate, 4),
+            'Iacc': c.iacc,
+            'Imiss': c.imiss,
+            'Imiss_Rate': round(c.imiss_rate, 4)
+        })
 
     for network in sorted(networks):
         print(f"\n==============================================================================")
@@ -195,7 +215,7 @@ def main() -> None:
             for name in ("base", "cim_overhead", "cim_setup", "cim_total", "cpu_overhead", "cpu_setup", "cpu_total"):
                 if name not in rep:
                     continue
-                print(fmt_row(name, "median", rep[name]["median"]))
+                print(fmt_row(name, rep[name]["median"]))
 
         base = rep["base"]["median"]
 
@@ -212,6 +232,12 @@ def main() -> None:
             
             cim_infer_total = (cim_total - cim_oh) - cim_setup_only
             cim_infer_per_iter = cim_infer_total.div(iters)
+
+            # Add to CSV
+            append_to_csv(network, "CIM", "overhead", cim_overhead_only)
+            append_to_csv(network, "CIM", "setup", cim_setup_only)
+            append_to_csv(network, "CIM", "inference_total", cim_infer_total)
+            append_to_csv(network, "CIM", "per_inference", cim_infer_per_iter)
 
             print("\n=== CIM derived metrics (using median of each group) ===")
             if(print_all_regions):
@@ -237,6 +263,12 @@ def main() -> None:
             cpu_infer_total = (cpu_total - cpu_oh) - cpu_setup_only
             cpu_infer_per_iter = cpu_infer_total.div(iters)
 
+            # Add to CSV
+            append_to_csv(network, "CPU", "overhead", cpu_overhead_only)
+            append_to_csv(network, "CPU", "setup", cpu_setup_only)
+            append_to_csv(network, "CPU", "inference_total", cpu_infer_total)
+            append_to_csv(network, "CPU", "per_inference", cpu_infer_per_iter)
+
             print("\n=== CPU derived metrics (using median of each group) ===")
             if(print_all_regions):
                 print(fmt_row("overhd", cpu_overhead_only))
@@ -246,6 +278,20 @@ def main() -> None:
         else:
             print("\n=== CPU derived metrics ===")
             print("  [!] Missing CPU logs, skipping calculations.")
+
+    # Save to CSV
+    if csv_data:
+        csv_filepath = os.path.join(RESULTS_BASE_DIR, "cache_benchmarking.csv")
+        try:
+            with open(csv_filepath, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=csv_data[0].keys())
+                writer.writeheader()
+                writer.writerows(csv_data)
+            print(f"\n[SUCCESS] Saved derived metrics CSV to: '{csv_filepath}'")
+        except Exception as e:
+            print(f"\n[ERROR] Failed to save CSV file: {e}")
+    else:
+        print("\n[!] No data collected to save to CSV.")
 
 if __name__ == "__main__":
     main()
