@@ -1,0 +1,14 @@
+Parameter  , Value
+E_SRAM     ,   160.0
+E_DRAM     , 15600.0
+E_exec/inst,    14.655
+E_eff_4b_4b,    44.82
+B_weight   ,     1
+B_bias     ,     4
+B_input    ,     1
+B_output   ,     4
+MNIST_in   ,   784
+MNIST_out  ,    10
+SYNTH_in   ,  1024
+SYNTH_out  ,  1024
+Iterations ,  1000

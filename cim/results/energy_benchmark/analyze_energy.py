@@ -1,32 +1,203 @@
+import os
+import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
 # Create the results directory if it does not exist
 os.makedirs("results", exist_ok=True)
 
-# 1. Raw Data from Spreadsheet (in picoJoules)
-# Split into CPU and CIM arrays to match the grouping logic of the instruction script
+# 1. Raw Results (in picoJoules)
+# Calculate energy for each stage from emperical results from cache and instruction benchmarks
 # Arrays are ordered: [MNIST, Synthetic]
-# TODO: don't hardcode, grab from results directory
+
+CONSTANTS_PATH = "constants.csv"
+INST_RESULT_PATH = "../instruction_benchmark/results/instruction_benchmarking.csv"
+CACHE_RESULT_PATH = "../cache_benchmark/results/cache_benchmarking.csv"
+
+def load_constants(path):
+    """Load constants.csv into a dictionary with float values for arbitrary lookup."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Constants file not found at '{path}'")
+    
+    df = pd.read_csv(path, skipinitialspace=True)
+    df.columns = df.columns.str.strip()
+    df['Parameter'] = df['Parameter'].str.strip()
+    return {row['Parameter']: float(row['Value']) for _, row in df.iterrows()}
+
+# 1. Load Constants
+try:
+    constants = load_constants(CONSTANTS_PATH)
+except Exception:
+    exit(1)
+
+# 2. Load Benchmark Data
+if not os.path.exists(INST_RESULT_PATH) or not os.path.exists(CACHE_RESULT_PATH):
+    print(f"[ERROR] One of the required results files were not found. Make sure both instruciton and cache benchmarks are ran first.")
+    exit(1)
+
+df_inst = pd.read_csv(INST_RESULT_PATH, skipinitialspace=True)
+df_cache = pd.read_csv(CACHE_RESULT_PATH, skipinitialspace=True)
+    
+# Clean instruction data
+df_inst.columns = df_inst.columns.str.strip()
+df_inst['Network'] = df_inst['Network'].str.strip()
+df_inst['Target'] = df_inst['Target'].str.strip()
+
+# Clean cache data
+df_cache.columns = df_cache.columns.str.strip()
+df_cache['Network'] = df_cache['Network'].str.strip()
+df_cache['Target'] = df_cache['Target'].str.strip()
+df_cache['Region'] = df_cache['Region'].str.strip()
+
+# 3. Calculate the average of the instruction runs grouped by Network and Target
+avg_inst = df_inst.groupby(['Network', 'Target'])[['Setup_Inst', 'Inference_Inst']].mean().reset_index()
+
+# Helper to compute CPU Pipeline energy [MNIST, Synthetic] for a given target ('CPU' or 'CIM')
+# Equation: E_exec = (N_inst,setup + N_inst,infr) * E_exec/inst
+def cpu_pipeline_energy(target_name):
+    e_exec_per_inst = constants.get("E_exec/inst", 0.0)
+    res = []
+    for net in ['MNIST', 'Synthetic']:
+        row = avg_inst[(avg_inst['Network'] == net) & (avg_inst['Target'] == target_name)]
+        if not row.empty:
+            total_inst = row['Setup_Inst'].values[0] + row['Inference_Inst'].values[0]
+            res.append(total_inst * e_exec_per_inst)
+        else:
+            res.append(0.0)
+    return res
+
+# Helper to compute Cache Access energy [MNIST, Synthetic] for instruction or data cache
+# Equation: E_fetch = (N_acc,setup + N_acc,infr) * (E_SRAM + M_i(E_DRAM + E_SRAM))
+def cache_energy(target_name, acc_col, miss_col):
+    e_sram = constants.get("E_SRAM", 0.0)
+    e_dram = constants.get("E_DRAM", 0.0)
+    res = []
+    
+    for net in ['MNIST', 'Synthetic']:
+        subset = df_cache[(df_cache['Network'] == net) & (df_cache['Target'] == target_name)]
+        
+        setup_row = subset[subset['Region'] == 'setup']
+        infr_row = subset[subset['Region'] == 'inference_total']
+        
+        if not setup_row.empty and not infr_row.empty:
+            acc_setup = setup_row[acc_col].values[0]
+            acc_infr = infr_row[acc_col].values[0]
+            
+            miss_setup = setup_row[miss_col].values[0]
+            miss_infr = infr_row[miss_col].values[0]
+            
+            total_acc = acc_setup + acc_infr
+            total_miss = miss_setup + miss_infr
+            
+            # Overall miss rate (M) across setup and inference
+            m_rate = (total_miss / total_acc) if total_acc > 0 else 0.0
+            
+            energy = total_acc * (e_sram + m_rate * (e_dram + e_sram))
+            res.append(energy)
+        else:
+            res.append(0.0)
+            
+    return res
+
+# Helper to compute DMA Traffic energy [MNIST, Synthetic]
+# Eqution: E_DMA = ((B_weight + B_bias) + (B_input * Iterations) + (B_output * Iterations)) * (E_DRAM/64)
+def dma_energy(target_name):
+    # No DMA used if CPU-only inference
+    if target_name == 'CPU':
+        return [0.0, 0.0]
+        
+    e_dram = constants.get("E_DRAM", 0.0)
+    b_weight = constants.get("B_weight", 0.0)
+    b_bias = constants.get("B_bias", 0.0)
+    b_input = constants.get("B_input", 0.0)
+    b_output = constants.get("B_output", 0.0)
+    iterations = constants.get("Iterations", 0.0)
+    
+    res = []
+    for net in ['MNIST', 'Synthetic']:
+        if net == 'MNIST':
+            in_size = constants.get("MNIST_in", 0.0)
+            out_size = constants.get("MNIST_out", 0.0)
+        else:
+            in_size = constants.get("SYNTH_in", 0.0)
+            out_size = constants.get("SYNTH_out", 0.0)
+            
+        weight_bytes = in_size * out_size * b_weight
+        bias_bytes = out_size * b_bias
+        input_bytes = in_size * b_input * iterations
+        output_bytes = out_size * b_output * iterations
+        
+        total_bytes = weight_bytes + bias_bytes + input_bytes + output_bytes
+        energy = total_bytes * (e_dram / 64.0)
+        res.append(energy)
+        
+    return res
+
+# Helper to compute CIM Compute energy [MNIST, Synthetic]
+# Equation: E_compute = (((B_input * NN_output * 2) / E_eff) * Iterations
+def cim_compute_energy(target_name):
+    if target_name == 'CPU':
+    # No CIM if CPU-only inference
+        return [0.0, 0.0]
+        
+    b_input = constants.get("B_input", 0.0)
+    e_eff = constants.get("E_eff_4b_4b", 0.0)
+    iterations = constants.get("Iterations", 0.0)
+    
+    mnist_in = constants.get("MNIST_in", 0.0)
+    mnist_out = constants.get("MNIST_out", 0.0)
+
+    synth_in = constants.get("SYNTH_in", 0.0)
+    synth_out = constants.get("SYNTH_out", 0.0)
+    
+    res = []
+    for net in ['MNIST', 'Synthetic']:
+        nn_input = (b_input * mnist_in) if net == 'MNIST' else (b_input * synth_in)
+        nn_output = mnist_out if net == 'MNIST' else synth_out
+        energy = (((nn_input * nn_output * 2.0) / e_eff) * iterations)
+        res.append(energy)
+        
+    return res
+
+# 4. Initialize Data Structures with calculations
 data_pj_cpu = {
-    'CPU Pipeline':       [877644966.89,   107951053066.64],
-    'Inst-Cache Acc.': [9636601977.97,  1180007451855.63],
-    'Data-Cache Acc.': [2995627052.38,  603545750887.39],
-    'DMA Traffic':        [0.0,            0.0],
-    'CIM Compute':        [0.0,            0.0]
+    'CPU Pipeline':     cpu_pipeline_energy('CPU'),
+    'Inst-Cache Acc.':  cache_energy('CPU', 'Iacc', 'Imiss'),
+    'Data-Cache Acc.':  cache_energy('CPU', 'Dacc', 'Dmiss'),
+    'DMA Traffic':      dma_energy('CPU'),
+    'CIM Compute':      cim_compute_energy('CPU')
 }
 
 data_pj_cim = {
-    'CPU Pipeline':       [100592447.58,   185482487.66],
-    'Inst-Cache Acc.': [1176720092.37,  2038466771.75],
-    'Data-Cache Acc.': [676516174.31,   752900800.68],
-    'DMA Traffic':        [202770750.00,   1504588800.00],
-    'CIM Compute':        [349843.82,      46790539.94]
+    'CPU Pipeline':     cpu_pipeline_energy('CIM'),
+    'Inst-Cache Acc.':  cache_energy('CIM', 'Iacc', 'Imiss'),
+    'Data-Cache Acc.':  cache_energy('CIM', 'Dacc', 'Dmiss'),
+    'DMA Traffic':      dma_energy('CIM'),
+    'CIM Compute':      cim_compute_energy('CIM')
 }
+
+
+# data_pj_cpu = {
+#     'CPU Pipeline':       [877644966.89,   107951053066.64],
+#     'Inst-Cache Acc.': [9636601977.97,  1180007451855.63],
+#     'Data-Cache Acc.': [2995627052.38,  603545750887.39],
+#     'DMA Traffic':        [0.0,            0.0],
+#     'CIM Compute':        [0.0,            0.0]
+# }
+
+# data_pj_cim = {
+#     'CPU Pipeline':       [100592447.58,   185482487.66],
+#     'Inst-Cache Acc.': [1176720092.37,  2038466771.75],
+#     'Data-Cache Acc.': [676516174.31,   752900800.68],
+#     'DMA Traffic':        [202770750.00,   1504588800.00],
+#     'CIM Compute':        [349843.82,      46790539.94]
+# }
 
 categories = list(data_pj_cpu.keys())
 
-# Convert all raw data from pJ to mJ (divide by 1,000,000,000)
+# ------------------ Generate Energy Graphs ------------------
+
+# 1. Convert all raw data from pJ to mJ (divide by 1,000,000,000)
 for key in categories:
     data_pj_cpu[key] = [val / 1e9 for val in data_pj_cpu[key]]
     data_pj_cim[key] = [val / 1e9 for val in data_pj_cim[key]]
