@@ -44,7 +44,6 @@ run_one() {
   "$cache_benchmark_helper" "$script" "$RUNS" "$SYNTH_FLAG"
 }
 
-
 # ---------- Default Benchmark Values ----------
 NETWORK="mnist"
 IMPL="all"
@@ -53,6 +52,12 @@ ITERS=1000
 RUNS=1
 
 # ---------- Command Line Parsing ----------
+
+# Print usage if no arguments given
+if [ $# -eq 0 ]; then
+  usage
+fi
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --network)

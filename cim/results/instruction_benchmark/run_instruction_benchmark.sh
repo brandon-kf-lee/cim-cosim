@@ -51,6 +51,12 @@ ITERS=1000
 RUNS=1
 
 # ---------- Command Line Parsing ----------
+
+# Print usage if no arguments given
+if [ $# -eq 0 ]; then
+  usage
+fi
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --network)
