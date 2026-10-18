@@ -282,210 +282,6 @@ cp() {
     echo -e "${GREEN}Done.${NC}"
 }
 
-# mnist_perf() {
-#     [[ $# -ge 1 ]] || usage
-#     CIM_DIR="$(abs_host_path "$1")"
-#     shift
-
-#     DEST_ROOT="/usr/bin/cim"
-
-#     # Ensure files exist
-#     need_file "${ROOTFS}"
-#     need_file "${TOOLCHAIN_BIN}"
-#     [[ -d "${CIM_DIR}" ]] || die "not a directory: ${CIM_DIR}"
-#     # need_file "${CIM_DIR}/Makefile"
-    
-#     # Source/implementation files
-#     need_file "${CIM_DIR}/src/cim.c"
-#     need_file "${CIM_DIR}/src/mnist.c"
-#     need_file "${CIM_DIR}/harness/src/mnist_bench.c"
-#     need_file "${CIM_DIR}/harness/src/perf_gate.c"
-
-#     # Main programs
-#     need_file "${CIM_DIR}/examples/mnist_CIM.c"
-#     need_file "${CIM_DIR}/examples/mnist_CPU.c"
-#     need_file "${CIM_DIR}/examples/mnist_CIM_inst.c"
-#     need_file "${CIM_DIR}/examples/mnist_CPU_inst.c"
-#     need_file "${CIM_DIR}/examples/mnist_CIM_time.c"
-#     need_file "${CIM_DIR}/examples/mnist_CPU_time.c"
-#     need_file "${CIM_DIR}/examples/mnist_accurate.c"
-#     need_file "${CIM_DIR}/examples/run_automation.sh"
-
-#     # Include & binaries directories
-#     [[ -d "${CIM_DIR}/include" ]] || die "missing include/: ${CIM_DIR}/include"
-#     [[ -d "${CIM_DIR}/harness/include" ]] || die "missing harness/include/: ${CIM_DIR}/harness/include"
-#     [[ -d "${CIM_DIR}/binaries" ]] || die "missing binaries/: ${CIM_DIR}/binaries"
-
-#     echo "=== Deploy (mnist_perf) ==="
-#     echo -e "CIM dir:     ${YELLOW}${CIM_DIR}${NC}"
-#     echo -e "Toolchain:   ${YELLOW}${TOOLCHAIN_BIN}${NC}"
-#     echo -e "Rootfs:      ${YELLOW}${ROOTFS}${NC}"
-#     echo -e "Guest dest:  ${YELLOW}${DEST_ROOT}${NC}"
-
-#     echo "[1/3] Building mnist_CIM_inst & mnist_CPU_inst with cross-compile toolchain..."
-#     (
-#       cd "${CIM_DIR}"
-#       mkdir -p build
-    
-#       CFLAGS="-std=c11 -Wall -Wextra -O2"
-#       CFLAGS_SYNTH="${CFLAGS} -DUSE_SYNTHETIC_NETWORK=1"
-#       INCS="-Iinclude -Iharness/include"
-    
-#       # --- Build libcim.a (userspace CIM library) ---
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} -c src/cim.c          -o build/cim.o
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} -c src/cim_dma.c      -o build/cim_dma.o
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} -c src/cim_internal.c -o build/cim_internal.o
-    
-#       rm -f build/libcim.a
-#       ar rcs build/libcim.a build/cim.o build/cim_dma.o build/cim_internal.o
-#       "${TOOLCHAIN_BIN}" ranlib build/libcim.a 2>/dev/null || true
-    
-#       # --- Other objects (app/helpers) ---
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} -c src/mnist.c               -o build/mnist.o
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} -c harness/src/mnist_bench.c -o build/mnist_bench.o
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} -c harness/src/perf_gate.c   -o build/perf_gate.o
-    
-#       # --- Programs (compile+link) ---
-    
-#       # CIM
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} \
-#         examples/mnist_CIM.c build/mnist.o build/mnist_bench.o \
-#         build/libcim.a -lm \
-#         -o build/mnist_CIM
-
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} \
-#         examples/mnist_CIM_inst.c build/mnist.o build/mnist_bench.o build/perf_gate.o \
-#         build/libcim.a -lm \
-#         -o build/mnist_CIM_inst
-
-#       "${TOOLCHAIN_BIN}" ${CFLAGS_SYNTH} ${INCS} \
-#         examples/mnist_CIM.c build/mnist.o build/mnist_bench.o build/perf_gate.o \
-#         build/libcim.a -lm \
-#         -o build/synthetic_CIM
-
-#       "${TOOLCHAIN_BIN}" ${CFLAGS_SYNTH} ${INCS} \
-#         examples/mnist_CIM_inst.c build/mnist.o build/mnist_bench.o build/perf_gate.o \
-#         build/libcim.a -lm \
-#         -o build/synthetic_CIM_inst
-    
-#       # "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} \
-#       #   examples/mnist_CIM_time.c build/mnist.o build/mnist_bench.o \
-#       #   build/libcim.a -lm \
-#       #   -o build/mnist_CIM_time
-    
-#       # CPU
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} \
-#         examples/mnist_CPU.c build/mnist.o build/mnist_bench.o \
-#         -o build/mnist_CPU -lm
-
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} \
-#         examples/mnist_CPU_inst.c build/mnist.o build/mnist_bench.o build/perf_gate.o \
-#         -o build/mnist_CPU_inst -lm
-
-#       "${TOOLCHAIN_BIN}" ${CFLAGS_SYNTH} ${INCS} \
-#         examples/mnist_CPU.c build/mnist.o build/mnist_bench.o build/perf_gate.o \
-#         -o build/synthetic_CPU -lm
-
-#       "${TOOLCHAIN_BIN}" ${CFLAGS_SYNTH} ${INCS} \
-#         examples/mnist_CPU_inst.c build/mnist.o build/mnist_bench.o build/perf_gate.o \
-#         -o build/synthetic_CPU_inst -lm
-    
-#       # "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} \
-#       #   examples/mnist_CPU_time.c build/mnist.o build/mnist_bench.o \
-#       #   -o build/mnist_CPU_time -lm
-    
-#       # CPU (accurate)
-#       "${TOOLCHAIN_BIN}" ${CFLAGS} ${INCS} \
-#         examples/mnist_accurate.c build/mnist.o build/mnist_bench.o \
-#         -o build/mnist_accurate -lm
-#     )
-
-#     # MNIST
-#     need_file "${CIM_DIR}/build/mnist_CIM"
-#     need_file "${CIM_DIR}/build/mnist_CPU"
-#     need_file "${CIM_DIR}/build/mnist_CIM_inst"
-#     need_file "${CIM_DIR}/build/mnist_CPU_inst"
-
-#     # Synthetic
-#     need_file "${CIM_DIR}/build/synthetic_CIM"
-#     need_file "${CIM_DIR}/build/synthetic_CPU"
-#     need_file "${CIM_DIR}/build/synthetic_CIM_inst"
-#     need_file "${CIM_DIR}/build/synthetic_CPU_inst"
-    
-#     need_file "${CIM_DIR}/build/mnist_accurate"
-#     # need_file "${CIM_DIR}/build/mnist_CIM_time"
-#     # need_file "${CIM_DIR}/build/mnist_CPU_time"
-    
-
-#     echo "[2/3] Copying executables into ${DEST_ROOT}/build/ ..."
-#     dbgfs_mkdir_p "${DEST_ROOT}/build"
-
-#     # MNIST
-#     dbgfs_copy_file_to "${CIM_DIR}/build/mnist_CIM" "${DEST_ROOT}/build/mnist_CIM"
-#     dbgfs_copy_file_to "${CIM_DIR}/build/mnist_CPU" "${DEST_ROOT}/build/mnist_CPU"    
-#     dbgfs_copy_file_to "${CIM_DIR}/build/mnist_CIM_inst" "${DEST_ROOT}/build/mnist_CIM_inst"
-#     dbgfs_copy_file_to "${CIM_DIR}/build/mnist_CPU_inst" "${DEST_ROOT}/build/mnist_CPU_inst"
-    
-#     dbgfs_chmod "${DEST_ROOT}/build/mnist_CIM" 0100755 || true
-#     dbgfs_chmod "${DEST_ROOT}/build/mnist_CPU" 0100755 || true
-#     dbgfs_chmod "${DEST_ROOT}/build/mnist_CIM_inst" 0100755 || true
-#     dbgfs_chmod "${DEST_ROOT}/build/mnist_CPU_inst" 0100755 || true
-
-#     # Synthetic
-#     dbgfs_copy_file_to "${CIM_DIR}/build/synthetic_CIM" "${DEST_ROOT}/build/synthetic_CIM"
-#     dbgfs_copy_file_to "${CIM_DIR}/build/synthetic_CPU" "${DEST_ROOT}/build/synthetic_CPU"
-#     dbgfs_copy_file_to "${CIM_DIR}/build/synthetic_CIM_inst" "${DEST_ROOT}/build/synthetic_CIM_inst"
-#     dbgfs_copy_file_to "${CIM_DIR}/build/synthetic_CPU_inst" "${DEST_ROOT}/build/synthetic_CPU_inst"
-    
-#     dbgfs_chmod "${DEST_ROOT}/build/synthetic_CIM" 0100755 || true
-#     dbgfs_chmod "${DEST_ROOT}/build/synthetic_CPU" 0100755 || true
-#     dbgfs_chmod "${DEST_ROOT}/build/synthetic_CIM_inst" 0100755 || true
-#     dbgfs_chmod "${DEST_ROOT}/build/synthetic_CPU_inst" 0100755 || true
-
-
-#     dbgfs_copy_file_to "${CIM_DIR}/build/mnist_accurate" "${DEST_ROOT}/build/mnist_accurate"
-#     dbgfs_copy_file_to "${CIM_DIR}/examples/run_automation.sh" "${DEST_ROOT}/run_automation.sh"
-    
-#     dbgfs_chmod "${DEST_ROOT}/build/mnist_accurate" 0100755 || true
-#     dbgfs_chmod "${DEST_ROOT}/run_automation.sh" 0100755 || true
-
-#     # dbgfs_copy_file_to "${CIM_DIR}/build/mnist_CIM_time" "${DEST_ROOT}/build/mnist_CIM_time"
-#     # dbgfs_copy_file_to "${CIM_DIR}/build/mnist_CPU_time" "${DEST_ROOT}/build/mnist_CPU_time"    
-#     # dbgfs_chmod "${DEST_ROOT}/build/mnist_CIM_time" 0100755 || true
-#     # dbgfs_chmod "${DEST_ROOT}/build/mnist_CPU_time" 0100755 || true
-    
-
-#     echo "[3/3] Copying required binaries/scripts into ${DEST_ROOT}/binaries/ ..."
-#     dbgfs_mkdir_p "${DEST_ROOT}/binaries"
-#     dbgfs_copy_file_to "${CIM_DIR}/binaries/MNIST_0.bin"           "${DEST_ROOT}/binaries/MNIST_0.bin"
-#     dbgfs_copy_file_to "${CIM_DIR}/binaries/mnist_network.bin"     "${DEST_ROOT}/binaries/mnist_network.bin"
-#     dbgfs_copy_file_to "${CIM_DIR}/binaries/mnist_network_q4.bin"  "${DEST_ROOT}/binaries/mnist_network_q4.bin"
-#     dbgfs_copy_file_to "${CIM_DIR}/binaries/t10k-images-idx3-ubyte" "${DEST_ROOT}/binaries/t10k-images-idx3-ubyte"
-#     dbgfs_copy_file_to "${CIM_DIR}/binaries/t10k-labels-idx1-ubyte" "${DEST_ROOT}/binaries/t10k-labels-idx1-ubyte"
-    
-#     # Copy synthetic network file if it exists
-#     if [[ -f "${CIM_DIR}/binaries/synthetic_network_q4.bin" ]]; then
-#         dbgfs_copy_file_to "${CIM_DIR}/binaries/synthetic_network_q4.bin" "${DEST_ROOT}/binaries/synthetic_network_q4.bin"
-#     fi
-
-#     echo -e "${GREEN}Done.${NC}"
-#     echo "In guest:"
-#     echo "  cd ${DEST_ROOT}"
-#     echo "  ./build/mnist_CIM"
-#     echo "  ./build/mnist_CPU"
-#     echo "  ./build/synthetic_CIM"
-#     echo "  ./build/synthetic_CPU"
-#     echo "  ./build/mnist_CIM_inst"
-#     echo "  ./build/mnist_CPU_inst"
-#     echo "  ./build/synthetic_CIM_inst"
-#     echo "  ./build/synthetic_CPU_inst"
-#     # echo "  ./build/mnist_CIM_time"
-#     # echo "  ./build/mnist_CPU_time"
-#     echo "  ./build/mnist_accurate"
-#     echo "Binaries under:"
-#     echo "  ${DEST_ROOT}/binaries/"
-# }
-
 inst_bench() {
     [[ $# -ge 1 ]] || usage
     CIM_DIR="$(abs_host_path "$1")"
@@ -759,7 +555,8 @@ Examples:
   $0 kmod --kmoddir ${KMOD_DIR} --name sc_dev_irq
   $0 cp ./a.txt ../b.bin /root
   $0 cp -r ~/CIM/cim-mem-ctrl/cim /usr/bin 
-  $0 mnist_perf ~/CIM/cim-mem-ctrl/cim
+  $0 inst_bench ~/CIM/cim-mem-ctrl/cim
+  $0 cache_bench ~/CIM/cim-mem-ctrl/cim
 EOF
   exit 1
 }
@@ -772,7 +569,6 @@ case "${MODE}" in
   user)        user "$@" ;;
   kmod)        kmod "$@" ;;
   cp)          cp "$@" ;;
-  # mnist_perf)  mnist_perf "$@" ;;
   inst_bench)  inst_bench "$@" ;;
   cache_bench) cache_bench "$@" ;;
   *)           usage ;;
