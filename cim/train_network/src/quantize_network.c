@@ -14,8 +14,7 @@
 #include <string.h>
 #include <math.h>
 
-#include "include/mnist_file.h"
-#include "include/neural_network.h"
+#include "neural_network.h"
 
 static int read_exact(const char *path, void *buf, size_t len)
 {

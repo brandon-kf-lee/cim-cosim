@@ -4,8 +4,8 @@
  *     Derived from: Andrew Carter, https://github.com/AndrewCarterUK/mnist-neural-network-plain-c
  */ 
 
-#include "include/mnist_file.h"
-#include "include/neural_network.h"
+#include "mnist_file.h"
+#include "neural_network.h"
 
 // Force the large network macros for this generator
 #define USE_SYNTHETIC_NETWORK 1
@@ -15,8 +15,8 @@
 /**
  * Downloaded from: http://yann.lecun.com/exdb/mnist/
  */
-const char * train_images_file = "binaries/train-images-idx3-ubyte";
-const char * train_labels_file = "binaries/train-labels-idx1-ubyte";
+const char * train_images_file = "../binaries/train-images-idx3-ubyte";
+const char * train_labels_file = "../binaries/train-labels-idx1-ubyte";
 
 int main(void)
 {
@@ -45,7 +45,7 @@ int main(void)
     }
 
     // Save network into external file as a binary
-    char * file_name = "binaries/mnist_network.bin";
+    char * file_name = "../binaries/mnist_network.bin";
     FILE * mnist_network = fopen(file_name, "wb");
     fwrite (&network, sizeof(network), 1, mnist_network);
     printf("Neural network saved as \"%s\"\n", file_name);

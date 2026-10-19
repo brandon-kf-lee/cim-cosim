@@ -4,8 +4,7 @@
  *     Derived from: Andrew Carter, https://github.com/AndrewCarterUK/mnist-neural-network-plain-c
  */ 
 
-#include "include/mnist_file.h"
-#include "include/neural_network.h"
+#include "neural_network.h"
 
 // Convert a pixel value from 0-255 to one from 0 to 1
 #define PIXEL_SCALE(x) (((float) (x)) / 255.0f)

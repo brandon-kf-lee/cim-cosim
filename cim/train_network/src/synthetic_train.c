@@ -7,8 +7,7 @@
 // Force the large network macros for this generator
 #define USE_SYNTHETIC_NETWORK 1
 
-#include "include/mnist_file.h"
-#include "include/neural_network.h"
+#include "neural_network.h"
 
 int main(void)
 {
@@ -18,7 +17,7 @@ int main(void)
     neural_network_q4_random_weights(&network_q4);
 
     // Save network into external file as a binary
-    char * file_name = "binaries/synthetic_network_q4.bin";
+    char * file_name = "../binaries/synthetic_network_q4.bin";
     FILE * synthetic_network = fopen(file_name, "wb");
     fwrite (&network_q4, sizeof(network_q4), 1, synthetic_network);
     printf("Neural network saved as \"%s\"\n", file_name);

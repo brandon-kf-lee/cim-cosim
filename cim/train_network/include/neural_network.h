@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-
+#include "nn_config.h"
 #include "mnist_file.h"
 
 typedef struct neural_network_t_ {
